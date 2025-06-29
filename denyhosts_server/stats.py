@@ -409,23 +409,20 @@ def update_stats_cache():
         logging.debug("Already updating statistics cache, exiting")
         returnValue(None)
     _stats_busy = True
-    logging.debug("_stats_busy set to True")
-    
+
     logging.debug("Updating statistics cache...")
+
+    # Fill history table for yesterday, when necessary
+    yield update_recent_history()
+    yield update_country_history()
 
     # Ensure graph directory exists so fig.savefig doesn't fail
     try:
         logging.debug("Making stats graph_dir: %s", config.graph_dir)
         os.makedirs(config.graph_dir, exist_ok=True)
     except Exception as e:
-        logging.warning("Could not create graph directory %s: %s", config.graph_dir, e)
-
-    # Fill history table for yesterday, when necessary
-    logging.debug("Updating recent history")
-    yield update_recent_history()
-    logging.debug("Updating country history")
-    yield update_country_history()
-
+        logging.warning("Could not create graph dir %s: %s", config.graph_dir, e)
+        
     now = int(time.time())
     stats = {}
     stats["last_updated"] = now
@@ -434,42 +431,6 @@ def update_stats_cache():
     stats["static_base"] = "../static"
     stats["graph_base"] = "../static/graphs"
     stats["server_version"] = version
-
-    # Get the absolute path for better logging
-    graph_path = os.path.abspath(stats["graph_base"])
-    logging.debug("graph path being used is: %s", graph_path)
-    logging.debug("graph - server version: %s", stats["server_version"])
-
-    # Check if the script can write to that path
-    try:
-        # Check if directory exists, create if it doesn't
-        if not os.path.exists(graph_path):
-            logging.debug("Graph directory doesn't exist, attempting to create: %s", graph_path)
-            os.makedirs(graph_path, exist_ok=True)
-
-        # Test write permissions by creating a temporary file
-        test_file = os.path.join(graph_path, '.write_test')
-        with open(test_file, 'w') as f:
-            f.write('test')
-        os.remove(test_file)
-        logging.debug("Write permission confirmed for graph path: %s", graph_path)
-
-    except OSError as e:
-        logging.error("Cannot write to graph path %s: %s", graph_path, e)
-        # Fallback to /tmp/graphs
-        fallback_path = "/tmp/graphs"
-        logging.warning("Falling back to: %s", fallback_path)
-        try:
-            os.makedirs(fallback_path, exist_ok=True)
-            stats["graph_base"] = fallback_path
-            logging.debug("Fallback graph path created and set: %s", fallback_path)
-        except OSError as fallback_error:
-            logging.error("Cannot create fallback graph path %s: %s", fallback_path, fallback_error)
-            raise
-
-    except Exception as e:
-        logging.error("Unexpected error checking graph path %s: %s", graph_path, e)
-
     try:
         #rows = yield database.run_query("SELECT num_hosts,num_reports, num_clients, new_hosts FROM stats ORDER BY time DESC LIMIT 1")
         stats["num_hosts"] = yield models.Cracker.count()
@@ -509,11 +470,9 @@ def update_stats_cache():
         logging.debug("Finished updating statistics cache...")
     except Exception as e:
         log.err(_why="Error updating statistics: {}".format(e))
-        # logging.exception("Error updating statistics")
-        logging.exception("Error updating statistics: {}".format(e))
+        logging.warning("Error updating statistics: {}".format(e))
 
     _stats_busy = False
-    logging.debug("_stats_busy set to False")
 
 @inlineCallbacks
 def render_stats():
@@ -521,16 +480,8 @@ def render_stats():
     logging.info("Rendering statistics page...")
     if _cache is None:
         while _cache is None:
-            logging.debug(
-                "No statistics cached yet (_stats_busy=%s), waiting for cache generation...",
-                _stats_busy,
-            )
-            if not _stats_busy:
-                update_stats_cache()
-            yield task.deferLater(reactor, 1, lambda _: 0, 0)
-
-            # logging.debug("No statistics cached yet, waiting for cache generation to finish...")
-            # yield task.deferLater(reactor, 1, lambda _:0, 0)
+            logging.debug("No statistics cached yet, waiting for cache generation to finish...")
+            yield task.deferLater(reactor, 1, lambda _:0, 0)
 
     now = int(time.time())
     try:
@@ -543,8 +494,7 @@ def render_stats():
         returnValue(html)
     except Exception as e:
         log.err(_why="Error rendering statistics page: {}".format(e))
-        # logging.warning("Error creating statistics page: {}".format(e))
-        logging.exception("Error creating statistics page: {}".format(e))
+        logging.warning("Error creating statistics page: {}".format(e))
 
 def update_history_txn(txn, date):
     try:
