@@ -141,16 +141,64 @@ class WebResource(Resource):
         return Resource.getChild(self, name, request)
 
     def render_GET(self, request):
+        # logging.debug("GET({})".format(request))
+        # request.setHeader("Content-Type", "text/html; charset=utf-8")
+        # def done(result):
+        #     if result is None:
+        #         request.write("<h1>An error has occurred</h1>")
+        #     else:
+        #         request.write(result.encode('utf-8'))
+        #     request.finish()
+        # def fail(err):
+        #     request.processingFailed(err)
+        # stats.render_stats().addCallbacks(done, fail)
+        # return server.NOT_DONE_YET
+        
         logging.debug("GET({})".format(request))
         request.setHeader("Content-Type", "text/html; charset=utf-8")
+
+        # Track if the connection is still alive
+        connection_lost = [False]
+
+        def connection_lost_callback(reason):
+            connection_lost[0] = True
+            logging.debug("Client connection lost: {}".format(reason))
+
+        # Register to be notified when connection is lost
+        request.notifyFinish().addErrback(connection_lost_callback)
+
         def done(result):
-            if result is None:
-                request.write("<h1>An error has occurred</h1>")
-            else:
-                request.write(result.encode('utf-8'))
-            request.finish()
+            # Check if connection is still alive before trying to write/finish
+            if connection_lost[0]:
+                logging.debug("Connection already lost, not attempting to finish request")
+                return
+
+            try:
+                if result is None:
+                    request.write("<h1>An error has occurred</h1>")
+                else:
+                    request.write(result.encode('utf-8'))
+                request.finish()
+            except RuntimeError as e:
+                if "connection was lost" in str(e):
+                    logging.debug("Connection lost while finishing request: {}".format(e))
+                else:
+                    logging.error("Unexpected error finishing request: {}".format(e))
+
         def fail(err):
-            request.processingFailed(err)
+            # Check if connection is still alive before processing failure
+            if connection_lost[0]:
+                logging.debug("Connection already lost, not processing failure")
+                return
+
+            try:
+                request.processingFailed(err)
+            except RuntimeError as e:
+                if "connection was lost" in str(e):
+                    logging.debug("Connection lost while processing failure: {}".format(e))
+                else:
+                    logging.error("Unexpected error processing failure: {}".format(e))
+
         stats.render_stats().addCallbacks(done, fail)
         return server.NOT_DONE_YET
 
