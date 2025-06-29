@@ -13,8 +13,6 @@ setup(name='denyhosts-server',
       author_email='janpascal@vanbest.org',
       url='https://github.com/denyhosts/denyhosts_sync',
       packages=['denyhosts_server'],
-      #install_requires=["Twisted", "twistar", "ipaddr", "jinja2", "numpy", "matplotlib", "GeoIP", "minify", "libnacl"],
-      install_requires=["configparser", "twisted", "twistar", "ipaddr", "jinja2", "matplotlib", "geoip", "libnacl"],
       scripts=['scripts/denyhosts-server'],
       data_files=[
         ('static/js', glob('static/js/*.min.js')),
