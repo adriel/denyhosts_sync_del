@@ -415,6 +415,7 @@ def update_stats_cache():
 
     # Ensure graph directory exists so fig.savefig doesn't fail
     try:
+        logging.debug("Making stats graph_dir: %s", config.graph_dir)
         os.makedirs(config.graph_dir, exist_ok=True)
     except Exception as e:
         logging.warning("Could not create graph directory %s: %s", config.graph_dir, e)
