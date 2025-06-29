@@ -77,7 +77,7 @@ def read_config(filename):
     global key_file, peers
 
     _config = configparser.ConfigParser()
-    _config.readfp(open(filename,'r'))
+    _config.read(filename)
 
     dbtype = _get(_config, "database", "type", "sqlite3")
     if dbtype not in ["sqlite3","MySQLdb"]:
