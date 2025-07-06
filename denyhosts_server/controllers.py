@@ -178,8 +178,30 @@ def get_qualifying_crackers(min_reports, min_resilience, previous_timestamp,
                 result.append(cracker.ip_address)
             else:
                 logging.debug("[TrxId:{}]     skipping {}".format(trxId, cracker.ip_address))
-        if (aTimer.getOngoing_time()>config.max_processing_time_get_new_hosts or 
-            len(result)>=max_crackers):
+        # if (aTimer.getOngoing_time()>config.max_processing_time_get_new_hosts or 
+        #     len(result)>=max_crackers):
+        #     break
+        if (aTimer.getOngoing_time() > config.max_processing_time_get_new_hosts or 
+            len(result) >= max_crackers):
+
+            elapsed_time = aTimer.getOngoing_time()
+
+            if elapsed_time > config.max_processing_time_get_new_hosts:
+                logging.info("[TrxId:{}] Breaking due to time limit: {:.2f}s elapsed (limit: {:.2f}s), "
+                            "processed {} crackers, found {} qualifying hosts".format(
+                                trxId, elapsed_time, config.max_processing_time_get_new_hosts, 
+                                len(cracker_ids), len(result)))
+
+            if len(result) >= max_crackers:
+                logging.info("[TrxId:{}] Breaking due to max crackers limit: {} found (limit: {}), "
+                            "elapsed time: {:.2f}s".format(
+                                trxId, len(result), max_crackers, elapsed_time))
+
+            # If both conditions are true, log that too
+            if (elapsed_time > config.max_processing_time_get_new_hosts and 
+                len(result) >= max_crackers):
+                logging.info("[TrxId:{}] Both time and count limits reached simultaneously".format(trxId))
+
             break
 
     if len(result) < max_crackers:
