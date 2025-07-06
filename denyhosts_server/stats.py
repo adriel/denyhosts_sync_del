@@ -416,6 +416,14 @@ def update_stats_cache():
     yield update_recent_history()
     yield update_country_history()
 
+    # Ensure graph directory exists so fig.savefig doesn't fail
+    try:
+        logging.debug("Making stats graph_dir: %s", config.graph_dir)
+        os.makedirs(config.graph_dir, exist_ok=True)
+    except Exception as e:
+        logging.warning("Could not create graph dir %s: %s", config.graph_dir, e)
+        raise  # Critical: directory required for saving graphs
+
     now = int(time.time())
     stats = {}
     stats["last_updated"] = now
