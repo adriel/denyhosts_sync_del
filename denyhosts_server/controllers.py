@@ -127,7 +127,7 @@ def add_report_to_cracker(cracker, client_ip, when=None, trxId=None):
 def get_qualifying_crackers(min_reports, min_resilience, previous_timestamp,
         max_crackers, latest_added_hosts, trxId=None):
 
-    #Start measurement of elapsed time of that function to compare it with the max value (in seconds) from the config file
+    # Start measurement of elapsed time of that function to compare it with the max value (in seconds) from the config file
     aTimer = utils.Timer()
     aTimer.start()
 
@@ -150,12 +150,16 @@ def get_qualifying_crackers(min_reports, min_resilience, previous_timestamp,
   
     if cracker_ids is None:
         returnValue([])
-    logging.debug("[TrxId:{}] Retrieved {} Crackers from database".format(trxId, len(cracker_ids)))
+
+    logging.debug("[TrxId:{}] Retrieved {} potential crackers from database".format(trxId, len(cracker_ids)))
 
     # Now look for conditions (c) and (d)
     result = []
+    processed_count = 0  # Track what we actually process
+
     for c in cracker_ids:
-        cracker_id = c[0]
+        processed_count += 1  # Increment for each cracker we examine
+        # cracker_id = c[0] # cracker_id never used, bug?
         if c[1] in latest_added_hosts:
             logging.debug("[TrxId:{}] Skipping {}, just reported by client".format(trxId, c[1]))
             continue
@@ -206,9 +210,13 @@ def get_qualifying_crackers(min_reports, min_resilience, previous_timestamp,
             if count_limit_reached:
                 reasons.append(f"count limit ({len(result)} >= {max_crackers})")
 
-            logging.info("[TrxId:{}] Breaking due to: {}. Processed {} crackers, found {} qualifying hosts".format(
-                trxId, " and ".join(reasons), len(cracker_ids), len(result)))
+            logging.info("[TrxId:{}] Breaking due to: {}. Processed {}/{} crackers, found {} qualifying hosts".format(
+                trxId, " and ".join(reasons), processed_count, len(cracker_ids), len(result)))
             break
+        
+    # Final summary with accurate counts
+    logging.debug("[TrxId:{}] Completed processing {}/{} crackers, returning {} hosts".format(
+        trxId, processed_count, len(cracker_ids), len(result)))
 
     if len(result) < max_crackers:
         # Add results from legacy server
