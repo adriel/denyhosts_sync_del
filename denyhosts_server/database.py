@@ -19,7 +19,9 @@ import datetime
 import time
 
 from twistar.registry import Registry
+from twisted.internet import reactor
 from twisted.internet.defer import inlineCallbacks, returnValue
+from twisted.internet.task import LoopingCall
 
 import GeoIP
 
@@ -65,6 +67,8 @@ def _evolve_database_initial(txn, dbtype):
     txn.execute("CREATE INDEX report_first_time ON reports (first_report_time)")
     txn.execute("CREATE UNIQUE INDEX report_cracker_ip ON reports (cracker_id, ip_address)")
     txn.execute("CREATE INDEX report_cracker_first ON reports (cracker_id, first_report_time)")
+    txn.execute("CREATE INDEX idx_reports_times ON reports(first_report_time, latest_report_time)")
+    txn.execute("CREATE INDEX idx_crackers_latest_time ON crackers(latest_time)")
 
     txn.execute("""CREATE TABLE legacy(
         id INTEGER PRIMARY KEY {}, 
@@ -308,3 +312,247 @@ def bootstrap_report(params):
     #return run_operation(query, *params)
     return bootstrap_table("reports", params)
 
+# AI DB health monitoring
+# Health monitoring globals
+_health_stats = {
+    "last_check": None,
+    "consecutive_failures": 0,
+    "total_queries": 0,
+    "failed_queries": 0,
+    "avg_response_time": 0.0,
+    "max_response_time": 0.0,
+    "connection_pool_size": 0,
+    "is_healthy": True,
+}
+
+
+@inlineCallbacks
+def check_database_health():
+    """Quick health check for monitoring"""
+    global _health_stats
+    start_time = time.time()
+
+    try:
+        # Simple connectivity test
+        yield run_query("SELECT 1")
+
+        # Check if we can access main tables
+        yield run_query("SELECT COUNT(*) FROM crackers LIMIT 1")
+
+        # Calculate response time
+        response_time = time.time() - start_time
+        _health_stats["avg_response_time"] = (
+            _health_stats["avg_response_time"] * 0.9 + response_time * 0.1
+        )
+        _health_stats["max_response_time"] = max(
+            _health_stats["max_response_time"], response_time
+        )
+
+        # Reset failure count on success
+        _health_stats["consecutive_failures"] = 0
+        _health_stats["is_healthy"] = True
+        _health_stats["last_check"] = time.time()
+
+        logging.debug(f"Database health check passed in {response_time:.3f}s")
+        returnValue(True)
+
+    except Exception as e:
+        _health_stats["consecutive_failures"] += 1
+        _health_stats["is_healthy"] = False
+        _health_stats["last_check"] = time.time()
+
+        logging.error(f"Database health check failed: {e}")
+
+        # Alert if we have multiple consecutive failures
+        if _health_stats["consecutive_failures"] >= 3:
+            logging.critical(
+                f"Database health check failed {_health_stats['consecutive_failures']} times consecutively!"
+            )
+
+        returnValue(False)
+
+
+@inlineCallbacks
+def get_database_stats():
+    """Get detailed database statistics"""
+    global _health_stats
+
+    try:
+        # Get connection pool info
+        pool_info = (
+            Registry.DBPOOL.connectionFactory.__dict__
+            if hasattr(Registry.DBPOOL, "connectionFactory")
+            else {}
+        )
+        _health_stats["connection_pool_size"] = getattr(
+            Registry.DBPOOL, "connections", 0
+        )
+
+        # Get table counts
+        crackers_count = yield run_query("SELECT COUNT(*) FROM crackers")
+        reports_count = yield run_query("SELECT COUNT(*) FROM reports")
+        legacy_count = yield run_query("SELECT COUNT(*) FROM legacy")
+
+        stats = {
+            "health": _health_stats.copy(),
+            "table_counts": {
+                "crackers": crackers_count[0][0] if crackers_count else 0,
+                "reports": reports_count[0][0] if reports_count else 0,
+                "legacy": legacy_count[0][0] if legacy_count else 0,
+            },
+            "connection_pool": {
+                "size": _health_stats["connection_pool_size"],
+                "max_connections": getattr(config, "dbparams", {}).get(
+                    "cp_max", "unknown"
+                ),
+            },
+        }
+
+        returnValue(stats)
+
+    except Exception as e:
+        logging.error(f"Failed to get database stats: {e}")
+        returnValue({"error": str(e)})
+
+
+# Wrapper for run_query with monitoring
+@inlineCallbacks
+def monitored_run_query(query, *args):
+    """Run query with performance monitoring"""
+    global _health_stats
+    start_time = time.time()
+
+    try:
+        _health_stats["total_queries"] += 1
+        result = yield run_query(query, *args)
+
+        # Track response time
+        response_time = time.time() - start_time
+        _health_stats["avg_response_time"] = (
+            _health_stats["avg_response_time"] * 0.95 + response_time * 0.05
+        )
+        _health_stats["max_response_time"] = max(
+            _health_stats["max_response_time"], response_time
+        )
+
+        # Log slow queries
+        if response_time > 1.0:  # Log queries taking more than 1 second
+            logging.warning(
+                f"Slow query detected: {response_time:.3f}s - {query[:100]}..."
+            )
+
+        returnValue(result)
+
+    except Exception as e:
+        _health_stats["failed_queries"] += 1
+        logging.error(f"Query failed: {e} - Query: {query[:100]}...")
+        raise
+
+
+# Health monitoring service
+class DatabaseHealthMonitor:
+    def __init__(self, check_interval=60):  # Check every 60 seconds
+        self.check_interval = check_interval
+        self.looping_call = LoopingCall(self.periodic_health_check)
+        self.is_running = False
+
+    def start(self):
+        """Start the health monitoring service"""
+        if not self.is_running:
+            self.looping_call.start(self.check_interval)
+            self.is_running = True
+            logging.info(
+                f"Database health monitoring started (check every {self.check_interval}s)"
+            )
+
+    def stop(self):
+        """Stop the health monitoring service"""
+        if self.is_running:
+            self.looping_call.stop()
+            self.is_running = False
+            logging.info("Database health monitoring stopped")
+
+    @inlineCallbacks
+    def periodic_health_check(self):
+        """Periodic health check - called automatically"""
+        try:
+            is_healthy = yield check_database_health()
+
+            # Log health status periodically
+            if _health_stats["total_queries"] % 100 == 0:  # Every 100 queries
+                failure_rate = (
+                    _health_stats["failed_queries"] / _health_stats["total_queries"]
+                ) * 100
+                logging.info(
+                    f"DB Health: {is_healthy}, Avg response: {_health_stats['avg_response_time']:.3f}s, "
+                    f"Failure rate: {failure_rate:.1f}%, Pool size: {_health_stats['connection_pool_size']}"
+                )
+
+        except Exception as e:
+            logging.error(f"Health monitoring error: {e}")
+
+
+# Global health monitor instance
+health_monitor = DatabaseHealthMonitor()
+
+
+# Add to your main application startup
+def start_database_monitoring():
+    """Call this when your application starts"""
+    health_monitor.start()
+
+
+def stop_database_monitoring():
+    """Call this when your application shuts down"""
+    health_monitor.stop()
+
+
+# HTTP endpoint for health checks (if you have a web interface)
+@inlineCallbacks
+def health_check_endpoint():
+    """Returns JSON health status - useful for load balancers"""
+    try:
+        stats = yield get_database_stats()
+
+        # Determine overall health
+        is_healthy = (
+            _health_stats["is_healthy"]
+            and _health_stats["consecutive_failures"] < 3
+            and (
+                _health_stats["failed_queries"] / max(_health_stats["total_queries"], 1)
+            )
+            < 0.1
+        )
+
+        response = {
+            "status": "healthy" if is_healthy else "unhealthy",
+            "timestamp": time.time(),
+            "stats": stats,
+        }
+
+        returnValue(response)
+
+    except Exception as e:
+        returnValue({"status": "error", "timestamp": time.time(), "error": str(e)})
+
+
+# Usage examples:
+def example_usage():
+    """How to use the health monitoring"""
+
+    # 1. Start monitoring when your app starts
+    start_database_monitoring()
+
+    # 2. Check health manually
+    d = check_database_health()
+    d.addCallback(
+        lambda healthy: print(f"Database is {'healthy' if healthy else 'unhealthy'}")
+    )
+
+    # 3. Get detailed stats
+    d2 = get_database_stats()
+    d2.addCallback(lambda stats: print(f"Database stats: {stats}"))
+
+    # 4. Use monitored queries instead of regular run_query
+    d3 = monitored_run_query("SELECT COUNT(*) FROM crackers")
+    d3.addCallback(lambda result: print(f"Crackers count: {result[0][0]}"))

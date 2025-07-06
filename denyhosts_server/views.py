@@ -95,8 +95,8 @@ class Server(xmlrpc.XMLRPC):
                 timestamp = int(timestamp)
                 threshold = int(threshold)
                 resiliency = int(resiliency)
-            except:
-                logging.warning("[TrxId:{}] Illegal arguments to get_new_hosts from client {}".format(trxId, remote_ip))
+            except Exception as e:
+                logging.warning("[TrxId:{}] Illegal arguments to get_new_hosts from client {}: {}".format(trxId, remote_ip, str(e)))
                 raise xmlrpc.Fault(102, "[TrxId:{}] Illegal parameters.".format(trxId))
 
             now = int(time.time()) 

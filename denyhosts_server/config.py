@@ -97,6 +97,20 @@ def read_config(filename):
             dbparams["database"] = "/var/lib/denyhosts-server/denyhosts.sqlite"
     elif dbtype=="MySQLdb":
         dbparams["cp_reconnect"] = True
+        # Additional MySQL performance settings
+        dbparams["charset"] = _get(_config, "database", "charset", "utf8mb4")
+        dbparams["use_unicode"] = _getboolean(_config, "database", "use_unicode", True)
+        dbparams["autocommit"] = _getboolean(_config, "database", "autocommit", True)
+
+        # Connection pool - moderate sizing for your traffic
+        dbparams["cp_max"] = _getint(_config, "database", "cp_max", 15)  # Down from 20
+        dbparams["cp_min"] = _getint(_config, "database", "cp_min", 3)   # Down from 5
+
+        # Faster timeouts for responsiveness
+        dbparams["connect_timeout"] = _getint(_config, "database", "connect_timeout", 5)
+        dbparams["timeout"] = _getint(_config, "database", "timeout", 10)
+
+        dbparams["cp_ping"] = _getint(_config, "database", "cp_ping", 1)  # Test connections
 
     if "cp_max" in dbparams:
         dbparams["cp_max"] = int(dbparams["cp_max"])
