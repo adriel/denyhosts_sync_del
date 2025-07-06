@@ -247,33 +247,28 @@ def run_main():
 
     configfile = args.config
 
-    # try:
-    #     config.read_config(args.config)
-    # except configparser.NoSectionError as e:
-    #     print("Error in reading the configuration file from \"{}\": {}.".format(args.config, e))
-    #     print("Please review the configuration file. Look at the supplied denyhosts-server.conf.example for more information.")
-    #     sys.exit()
-
     try:
         config.read_config(args.config)
     except configparser.NoSectionError as e:
-        print(f"Error: No section found in config file \"{args.config}\": {e}")
-    except configparser.MissingSectionHeaderError as e:
-        print(f"Error: Missing section headers in config file \"{args.config}\": {e}")
-    except configparser.ParsingError as e:
-        print(f"Error: Failed to parse config file \"{args.config}\": {e}")
-    except FileNotFoundError:
-        print(f"Error: Config file not found: \"{args.config}\"")
-    except Exception as e:
-        print(f"Unexpected error while reading config file \"{args.config}\": {type(e).__name__}: {e}")
-    else:
-        print(f"Successfully read configuration from \"{args.config}\"")
-        # optionally print config sections to confirm
+        print("Error in reading the configuration file from \"{}\": {}.".format(args.config, e))
+        print("Please review the configuration file. Look at the supplied denyhosts-server.conf.example for more information.")
+        
+        # Print the contents of the config file
+        try:
+            print(f"--- Contents of config file: {args.config} ---")
+            with open(args.config, "r") as f:
+                for line in f:
+                    print(line.rstrip())
+            print("--- End of config file ---\n")
+        except Exception as file_e:
+            print(f"Failed to read config file contents: {file_e}")
+
         print("Sections found:", config.sections())
         for section in config.sections():
             print(f"[{section}]")
             for key, value in config.items(section):
                 print(f"{key} = {value}")
+        sys.exit()
 
     configure_logging()
 
