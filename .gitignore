@@ -18,3 +18,4 @@ static/graph/*.png
 .vscode
 TODO
 mynotes.txt
+.DS_Store
