@@ -478,11 +478,10 @@ class DatabaseHealthMonitor:
         try:
             is_healthy = yield check_database_health()
 
-            # Log health status periodically
-            if _health_stats["total_queries"] % 100 == 0:  # Every 100 queries
-                failure_rate = (
-                    _health_stats["failed_queries"] / _health_stats["total_queries"]
-                ) * 100
+            # Log health status every 100 queries (skip when count is zero)
+            tq = _health_stats["total_queries"]
+            if tq > 0 and tq % 100 == 0:
+                failure_rate = (_health_stats["failed_queries"] / tq) * 100
                 logging.info(
                     f"DB Health: {is_healthy}, Avg response: {_health_stats['avg_response_time']:.3f}s, "
                     f"Failure rate: {failure_rate:.1f}%, Pool size: {_health_stats['connection_pool_size']}"
