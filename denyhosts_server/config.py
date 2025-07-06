@@ -110,8 +110,6 @@ def read_config(filename):
         # Faster timeouts for responsiveness
         dbparams["connect_timeout"] = _getint(_config, "database", "connect_timeout", 5)
 
-        dbparams["cp_ping"] = _getint(_config, "database", "cp_ping", 1)  # Test connections
-
     if "cp_max" in dbparams:
         dbparams["cp_max"] = int(dbparams["cp_max"])
     if "cp_min" in dbparams:
