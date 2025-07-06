@@ -46,8 +46,8 @@ def handle_report_from_client(client_ip, timestamp, hosts, trxId=None):
                     validIP = True
                     logging.info("[TrxId:{}] Illegal host ip address {} converted to {} from {}".format(trxId, cracker_ip, cracker_ip_tentative, client_ip))
                     cracker_ip = cracker_ip_tentative
-            except Exception:
-                logging.warning("[TrxId:{}] Illegal host ip address {} from {} - Ignored due to exception".format(trxId, cracker_ip, client_ip))
+            except Exception as e:
+                logging.warning("[TrxId:{}] Illegal host ip address {} from {} - Ignored due to exception: {}".format(trxId, cracker_ip, client_ip, str(e)))
                 # fail gracefully!
                 pass
         else:
@@ -178,8 +178,22 @@ def get_qualifying_crackers(min_reports, min_resilience, previous_timestamp,
                 result.append(cracker.ip_address)
             else:
                 logging.debug("[TrxId:{}]     skipping {}".format(trxId, cracker.ip_address))
-        if (aTimer.getOngoing_time()>config.max_processing_time_get_new_hosts or 
-            len(result)>=max_crackers):
+        
+        # Check if processing should stop due to time limit or result count limit.
+        # Break the loop if either condition is met and log the reason(s).
+        elapsed_time = aTimer.getOngoing_time()
+        time_limit_reached = elapsed_time > config.max_processing_time_get_new_hosts
+        count_limit_reached = len(result) >= max_crackers
+
+        if time_limit_reached or count_limit_reached:
+            reasons = []
+            if time_limit_reached:
+                reasons.append(f"time limit ({elapsed_time:.2f}s >= {config.max_processing_time_get_new_hosts:.2f}s)")
+            if count_limit_reached:
+                reasons.append(f"count limit ({len(result)} >= {max_crackers})")
+
+            logging.info("[TrxId:{}] Breaking due to: {}. Processed {} crackers, found {} qualifying hosts".format(
+                trxId, " and ".join(reasons), len(cracker_ids), len(result)))
             break
 
     if len(result) < max_crackers:
@@ -274,7 +288,7 @@ def download_from_legacy_server():
         try:
             last_legacy_sync_time = int(response["timestamp"])
         except:
-            logging.ERROR("Illegal timestamp {} from legacy server".format(response["timestamp"]))
+            logging.error("Illegal timestamp {} from legacy server".format(response["timestamp"]))
         #Registry.DBPOOL.runOperation('UPDATE info SET `value`=%s WHERE `key`="last_legacy_sync"', (str(last_legacy_sync_time),))
         database.run_operation('UPDATE info SET `value`=? WHERE `key`="last_legacy_sync"', str(last_legacy_sync_time))
         now = int(time.time())
