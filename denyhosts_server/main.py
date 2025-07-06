@@ -247,12 +247,33 @@ def run_main():
 
     configfile = args.config
 
+    # try:
+    #     config.read_config(args.config)
+    # except configparser.NoSectionError as e:
+    #     print("Error in reading the configuration file from \"{}\": {}.".format(args.config, e))
+    #     print("Please review the configuration file. Look at the supplied denyhosts-server.conf.example for more information.")
+    #     sys.exit()
+
     try:
         config.read_config(args.config)
     except configparser.NoSectionError as e:
-        print("Error in reading the configuration file from \"{}\": {}.".format(args.config, e))
-        print("Please review the configuration file. Look at the supplied denyhosts-server.conf.example for more information.")
-        sys.exit()
+        print(f"Error: No section found in config file \"{args.config}\": {e}")
+    except configparser.MissingSectionHeaderError as e:
+        print(f"Error: Missing section headers in config file \"{args.config}\": {e}")
+    except configparser.ParsingError as e:
+        print(f"Error: Failed to parse config file \"{args.config}\": {e}")
+    except FileNotFoundError:
+        print(f"Error: Config file not found: \"{args.config}\"")
+    except Exception as e:
+        print(f"Unexpected error while reading config file \"{args.config}\": {type(e).__name__}: {e}")
+    else:
+        print(f"Successfully read configuration from \"{args.config}\"")
+        # optionally print config sections to confirm
+        print("Sections found:", config.sections())
+        for section in config.sections():
+            print(f"[{section}]")
+            for key, value in config.items(section):
+                print(f"{key} = {value}")
 
     configure_logging()
 
