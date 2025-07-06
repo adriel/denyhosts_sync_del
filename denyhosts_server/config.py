@@ -109,7 +109,6 @@ def read_config(filename):
 
         # Faster timeouts for responsiveness
         dbparams["connect_timeout"] = _getint(_config, "database", "connect_timeout", 5)
-        dbparams["timeout"] = _getint(_config, "database", "timeout", 10)
 
         dbparams["cp_ping"] = _getint(_config, "database", "cp_ping", 1)  # Test connections
 
@@ -121,8 +120,6 @@ def read_config(filename):
         dbparams["port"] = int(dbparams["port"])
     if "connect_timeout" in dbparams:
         dbparams["connect_timeout"] = int(dbparams["connect_timeout"])
-    if "timeout" in dbparams:
-        dbparams["timeout"] = int(dbparams["timeout"])
 
     maintenance_interval = _getint(_config, "maintenance", "interval_seconds", 3600)
     expiry_days = _getfloat(_config, "maintenance", "expiry_days", 30)
