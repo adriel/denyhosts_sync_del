@@ -32,8 +32,8 @@ def wait_and_lock_host(host):
             logging.debug("waiting to update host {}, {} blocked now".format(host, len(_hosts_busy)))
             yield task.deferLater(reactor, 0.01, lambda _:0, 0)
         _hosts_busy.add(host)
-    except:
-        logging.debug("Exception in locking {}".format(host), exc_info=True)
+    except Exception as e:
+        logging.debug("Exception in locking {}: {}".format(host, str(e)), exc_info=True)
 
     returnValue(0)
 
@@ -41,8 +41,8 @@ def unlock_host(host):
     try:
         _hosts_busy.remove(host)
         #logging.debug("host {} unlocked, {} blocked now".format(host, len(_hosts_busy)))
-    except:
-        logging.debug("Exception in unlocking {}".format(host), exc_info=True)
+    except Exception as e:
+        logging.debug("Exception in unlocking {}: {}".format(host, str(e)), exc_info=True)
 
 def none_waiting():
     return len(_hosts_busy) == 0
@@ -86,7 +86,7 @@ class Timer:
     def start(self):
         """Start a new timer"""
         if self._start_time is not None:
-            raise TimerError(f"Timer is running. Use .stop() to stop it")
+            raise TimerError("Timer is running. Use .stop() to stop it")
         self._stop_time = None
         self._start_time = time.perf_counter()
 
@@ -94,7 +94,7 @@ class Timer:
     def stop(self):
         """Stop the timer, and report the elapsed time"""
         if self._start_time is None:
-            raise TimerError(f"Timer is not running. Use .start() to start it")
+            raise TimerError("Timer is not running. Use .start() to start it")
         self._stop_time = time.perf_counter()
 
     def __str__(self):
