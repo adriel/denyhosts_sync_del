@@ -141,59 +141,99 @@ def get_qualifying_crackers(min_reports, min_resilience, previous_timestamp,
     # See https://bugs.debian.org/cgi-bin/bugreport.cgi?bug=622697
    
     # This query takes care of conditions (a) and (b)
-    # cracker_ids = yield database.runGetPossibleQualifyingCrackerQuery(min_reports, min_resilience, previous_timestamp)
+    # cracker_reports_data = yield database.runGetPossibleQualifyingCrackerQuery(min_reports, min_resilience, previous_timestamp)
     # If min_reports is 1, then resiliency value must be discarded
     if min_reports == 1:
         min_resilience = 0
-    cracker_ids = yield database.run_query("""
-            SELECT DISTINCT c.id, c.ip_address, c.first_time, c.latest_time, c.total_reports, c.current_reports, c.resiliency 
-            FROM crackers c 
-            WHERE (c.current_reports >= ?)
-                AND (c.resiliency >= ?)
-                AND (c.latest_time >= ?)
-            ORDER BY c.first_time DESC
-            """, min_reports, min_resilience, previous_timestamp)
+    
+    # OPTIMIZED: Single query to get all crackers with their reports
+    # This replaces the N+1 query problem
+    cracker_reports_data = yield database.run_query("""
+        SELECT DISTINCT 
+            c.id, c.ip_address, c.first_time, c.latest_time, c.total_reports, c.current_reports, c.resiliency,
+            r.first_report_time, r.latest_report_time, r.ip_address as reporter_ip
+        FROM crackers c 
+        LEFT JOIN reports r ON c.id = r.cracker_id
+        WHERE (c.current_reports >= ?)
+            AND (c.resiliency >= ?)
+            AND (c.latest_time >= ?)
+        ORDER BY c.first_time DESC, r.first_report_time ASC
+        """, min_reports, min_resilience, previous_timestamp)
   
-    if cracker_ids is None:
+    if cracker_reports_data is None:
         returnValue([])
 
-    logging.debug("[TrxId:{}] Retrieved {} potential crackers from database".format(trxId, len(cracker_ids)))
+    # Group the data by cracker
+    crackers_data = {}
+    for row in cracker_reports_data:
+        cracker_id = row[0]
+        if cracker_id not in crackers_data:
+            crackers_data[cracker_id] = {
+                'cracker': {
+                    'id': row[0], 'ip_address': row[1], 'first_time': row[2],
+                    'latest_time': row[3], 'total_reports': row[4],
+                    'current_reports': row[5], 'resiliency': row[6]
+                },
+                'reports': []
+            }
+        
+        # Add report if it exists (LEFT JOIN might have NULLs)
+        if row[7] is not None:
+            crackers_data[cracker_id]['reports'].append({
+                'first_report_time': row[7],
+                'latest_report_time': row[8],
+                'ip_address': row[9]
+            })
 
-    # Now look for conditions (c) and (d)
+    logging.debug("[TrxId:{}] Retrieved {} potential crackers from database".format(trxId, len(crackers_data)))
+
+    # Now look for conditions (c) and (d) - SAME LOGIC AS ORIGINAL
     result = []
     processed_count = 0  # Track what we actually process
 
-    for c in cracker_ids:
+    for cracker_id, data in crackers_data.items():
         processed_count += 1  # Increment for each cracker we examine
-        # cracker_id = c[0] # cracker_id never used, bug?
-        if c[1] in latest_added_hosts:
-            logging.debug("[TrxId:{}] Skipping {}, just reported by client".format(trxId, c[1]))
+        cracker_info = data['cracker']
+        reports = data['reports']
+        
+        if cracker_info['ip_address'] in latest_added_hosts:
+            logging.debug("[TrxId:{}] Skipping {}, just reported by client".format(trxId, cracker_info['ip_address']))
             continue
 
-        cracker = Cracker(id = c[0], ip_address = c[1], first_time = c[2], latest_time = c[3], total_reports = c[4], current_reports = c[5], resiliency = c[6])
+        # Create cracker object (same as original)
+        cracker = Cracker(id=cracker_info['id'], ip_address=cracker_info['ip_address'], 
+                         first_time=cracker_info['first_time'], latest_time=cracker_info['latest_time'], 
+                         total_reports=cracker_info['total_reports'], current_reports=cracker_info['current_reports'], 
+                         resiliency=cracker_info['resiliency'])
+        
         if cracker is None:
             continue
         logging.debug("[TrxId:{}] Examining ".format(trxId)+str(cracker))
 
-        #The following statement is to be Optimized
-        reports = yield cracker.reports.get(orderby="first_report_time ASC")
-        logging.debug("[TrxId:{}] r[m-1].first_report_time={}, previous_timestamp={}, nb={}".format(trxId, reports[min_reports-1].first_report_time, previous_timestamp, len(reports)))
-        if (len(reports)>=min_reports and 
-            reports[min_reports-1].first_report_time >= previous_timestamp): 
+        # SAME LOGIC AS ORIGINAL - but using pre-loaded reports instead of N+1 queries
+        # Sort reports by first_report_time (equivalent to original orderby)
+        reports_sorted = sorted(reports, key=lambda x: x['first_report_time'])
+        
+        logging.debug("[TrxId:{}] r[m-1].first_report_time={}, previous_timestamp={}, nb={}".format(
+            trxId, reports_sorted[min_reports-1]['first_report_time'] if len(reports_sorted) >= min_reports else 'N/A', 
+            previous_timestamp, len(reports_sorted)))
+        
+        if (len(reports_sorted) >= min_reports and 
+            reports_sorted[min_reports-1]['first_report_time'] >= previous_timestamp): 
             # condition (c) satisfied
             logging.debug("[TrxId:{}] condition (c) satisfied - Appending {}".format(trxId, cracker.ip_address))
             result.append(cracker.ip_address)
         else:
             logging.debug("[TrxId:{}] checking condition (d)...".format(trxId))
             satisfied = False
-            for report in reports:
+            for report in reports_sorted:
                 if (not satisfied and 
-                    report.latest_report_time>=previous_timestamp and
-                    report.latest_report_time-cracker.first_time>=min_resilience):
+                    report['latest_report_time'] >= previous_timestamp and
+                    report['latest_report_time'] - cracker.first_time >= min_resilience):
                     logging.debug("[TrxId:{}]     d1".format(trxId))
                     satisfied = True
-                if (report.latest_report_time<=previous_timestamp and 
-                    report.latest_report_time-cracker.first_time>=min_resilience):
+                if (report['latest_report_time'] <= previous_timestamp and 
+                    report['latest_report_time'] - cracker.first_time >= min_resilience):
                     logging.debug("[TrxId:{}]     d2 failed".format(trxId))
                     satisfied = False
                     break
@@ -217,12 +257,12 @@ def get_qualifying_crackers(min_reports, min_resilience, previous_timestamp,
                 reasons.append(f"count limit ({len(result)} >= {max_crackers})")
 
             logging.info("[TrxId:{}] Breaking due to: {}. Processed {}/{} crackers, found {} qualifying hosts".format(
-                trxId, " and ".join(reasons), processed_count, len(cracker_ids), len(result)))
+                trxId, " and ".join(reasons), processed_count, len(crackers_data), len(result)))
             break
         
     # Final summary with accurate counts
     logging.debug("[TrxId:{}] Completed processing {}/{} crackers, returning {} hosts".format(
-        trxId, processed_count, len(cracker_ids), len(result)))
+        trxId, processed_count, len(crackers_data), len(result)))
 
     if len(result) < max_crackers:
         # Add results from legacy server
@@ -232,7 +272,6 @@ def get_qualifying_crackers(min_reports, min_resilience, previous_timestamp,
 
     logging.debug("[TrxId:{}] Returning {} hosts".format(trxId, len(result)))
     returnValue(result)
-
 # Periodical database maintenance
 # From algorithm by Anne Bezemer, see https://bugs.debian.org/cgi-bin/bugreport.cgi?bug=622697
 # Expiry/maintenance every hour/day:
