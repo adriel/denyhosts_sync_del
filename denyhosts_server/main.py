@@ -252,22 +252,6 @@ def run_main():
     except configparser.NoSectionError as e:
         print("Error in reading the configuration file from \"{}\": {}.".format(args.config, e))
         print("Please review the configuration file. Look at the supplied denyhosts-server.conf.example for more information.")
-        
-        # Print the contents of the config file
-        try:
-            print(f"--- Contents of config file: {args.config} ---")
-            with open(args.config, "r") as f:
-                for line in f:
-                    print(line.rstrip())
-            print("--- End of config file ---\n")
-        except Exception as file_e:
-            print(f"Failed to read config file contents: {file_e}")
-
-        print("Sections found:", config.sections())
-        for section in config.sections():
-            print(f"[{section}]")
-            for key, value in config.items(section):
-                print(f"{key} = {value}")
         sys.exit()
 
     configure_logging()
