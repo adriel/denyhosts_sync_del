@@ -120,9 +120,9 @@ def read_config(filename):
     if "port" in dbparams:
         dbparams["port"] = int(dbparams["port"])
     if "connect_timeout" in dbparams:
-        dbparams["connect_timeout"] = float(dbparams["connect_timeout"])
+        dbparams["connect_timeout"] = int(dbparams["connect_timeout"])
     if "timeout" in dbparams:
-        dbparams["timeout"] = float(dbparams["timeout"])
+        dbparams["timeout"] = int(dbparams["timeout"])
 
     maintenance_interval = _getint(_config, "maintenance", "interval_seconds", 3600)
     expiry_days = _getfloat(_config, "maintenance", "expiry_days", 30)
