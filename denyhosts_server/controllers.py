@@ -80,33 +80,47 @@ def add_report_to_cracker(cracker, client_ip, when=None, trxId=None):
         orderby='latest_report_time ASC'
     )
     if len(reports) == 0:
+        # First report from this IP for this cracker
         report = Report(ip_address=client_ip, first_report_time=when, latest_report_time=when)
         yield report.save()
-        cracker.current_reports += 1
         yield report.cracker.set(cracker)
+        cracker.current_reports += 1
     elif len(reports) == 1:
         report = reports[0]
-        # Add second report after 24 hours
+        # Check if 24 hours have passed since the last report
         if when > report.latest_report_time + 24*3600:
+            # Create second report
             report = Report(ip_address=client_ip, first_report_time=when, latest_report_time=when)
             yield report.save()
             yield report.cracker.set(cracker)
+            cracker.current_reports += 1
+        else:
+            # Update existing report's latest time
+            report.latest_report_time = when
+            yield report.save()
     elif len(reports) == 2:
-        latest_report = reports[1]
+        latest_report = reports[1]  # Most recent report
         # Add third report after again 24 hours
         if when > latest_report.latest_report_time + 24*3600:
+            # Create third report
             report = Report(ip_address=client_ip, first_report_time=when, latest_report_time=when)
             yield report.save()
             yield report.cracker.set(cracker)
+            cracker.current_reports += 1
+        else:
+            # Update existing latest report's time
+            latest_report.latest_report_time = when
+            yield latest_report.save()
     else:
+        # 3 or more reports - just update the latest one
         latest_report = reports[-1]
         latest_report.latest_report_time = when
         yield latest_report.save()
     
+    # Update cracker statistics
     cracker.total_reports += 1
     cracker.latest_time = when
     cracker.resiliency = when - cracker.first_time
-
     yield cracker.save()
 
 @inlineCallbacks
