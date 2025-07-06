@@ -37,19 +37,25 @@ def handle_report_from_client(client_ip, timestamp, hosts, trxId=None):
         if not utils.is_valid_ip_address(cracker_ip):
             try:
                 cracker_ip_tentative = utils.getIP(cracker_ip)
-                logging.debug("[TrxId:{}] Tried to convert {} in {}".format(trxId, cracker_ip, cracker_ip_tentative))
+                logging.debug("[TrxId:{}] Tried to convert {} to {}".format(trxId, cracker_ip, cracker_ip_tentative))
+
                 if not utils.is_valid_ip_address(cracker_ip_tentative):
-                    # Ignore the malformed ip
-                    logging.warning("[TrxId:{}] Illegal host ip address {} from {} - Ignored".format(trxId, cracker_ip, client_ip))
-                    raise Exception("Illegal IP address \"{}\".".format(cracker_ip))
+                    logging.warning("[TrxId:{}] Invalid IP address {} from {} after conversion - Ignored".format(trxId, cracker_ip, client_ip))
+                    continue  # Skip this IP and move to next one
                 else:
                     validIP = True
-                    logging.info("[TrxId:{}] Illegal host ip address {} converted to {} from {}".format(trxId, cracker_ip, cracker_ip_tentative, client_ip))
+                    logging.info("[TrxId:{}] Illegal host IP converted {} to {} from {}".format(trxId, cracker_ip, cracker_ip_tentative, client_ip))
                     cracker_ip = cracker_ip_tentative
+
+            except (ValueError, TypeError, OSError) as e:
+                # Handle specific IP conversion errors
+                logging.warning("[TrxId:{}] Failed to convert IP {} from {}: {} - Ignored".format(trxId, cracker_ip, client_ip, str(e)))
+                continue  # Skip this IP and move to next one
+
             except Exception as e:
-                logging.warning("[TrxId:{}] Illegal host ip address {} from {} - Ignored due to exception: {}".format(trxId, cracker_ip, client_ip, str(e)))
-                # fail gracefully!
-                pass
+                # Log unexpected errors but don't let them crash the processing
+                logging.error("[TrxId:{}] Unexpected error processing IP {} from {}: {} - Ignored".format(trxId, cracker_ip, client_ip, str(e)))
+                continue  # Skip this IP and move to next one
         else:
             validIP = True
 
