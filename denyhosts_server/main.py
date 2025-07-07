@@ -247,13 +247,6 @@ def run_main():
 
     configfile = args.config
 
-    # try:
-    #     config.read_config(args.config)
-    # except configparser.NoSectionError as e:
-    #     print("Error in reading the configuration file from \"{}\": {}.".format(args.config, e))
-    #     print("Please review the configuration file. Look at the supplied denyhosts-server.conf.example for more information.")
-    #     sys.exit()
-
     try:
         config.read_config(args.config)
     except configparser.NoSectionError as e:
