@@ -142,11 +142,6 @@ class WebResource(Resource):
 
     def render_GET(self, request):
         logging.debug("GET({})".format(request))
-
-        # Handle health check endpoint
-        if request.path == b'/health':
-            return self._handle_health_check(request)
-                
         request.setHeader("Content-Type", "text/html; charset=utf-8")
         def done(result):
             if result is None:
@@ -158,29 +153,5 @@ class WebResource(Resource):
             request.processingFailed(err)
         stats.render_stats().addCallbacks(done, fail)
         return server.NOT_DONE_YET
-
-def _handle_health_check(self, request):
-    """Handle health check endpoint"""
-    import json
-    from . import database
-
-    request.setHeader("Content-Type", "application/json")
-
-    def done(result):
-        request.write(json.dumps(result).encode('utf-8'))
-        request.finish()
-
-    def fail(err):
-        error_response = {
-            "status": "error", 
-            "timestamp": time.time(), 
-            "error": str(err)
-        }
-        request.write(json.dumps(error_response).encode('utf-8'))
-        request.finish()
-
-    # Use your existing health_check_endpoint function
-    database.health_check_endpoint().addCallbacks(done, fail)
-    return server.NOT_DONE_YET
 
 # vim: tabstop=8 expandtab shiftwidth=4 softtabstop=4
