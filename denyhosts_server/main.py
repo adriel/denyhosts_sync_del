@@ -99,8 +99,6 @@ def shutdown():
         logging.debug("Waiting 1 more second...")
         yield task.deferLater(reactor, 1, lambda _:0, 0)
         logging.info("Continuing shutdown")
-        # Stop database monitoring before shutdown
-        database.stop_database_monitoring()
     except Exception as e:
         logging.exception("Error in shutdown callback: %s", str(e))
     
@@ -314,9 +312,6 @@ def run_main():
 
         # Set up maintenance and legacy sync jobs
         schedule_jobs()
-
-        # Start database monitoring after all other startup tasks
-        database.start_database_monitoring()
 
     # Start reactor
     logging.info("Starting denyhosts-server version {}".format(version))
