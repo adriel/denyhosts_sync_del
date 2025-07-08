@@ -47,7 +47,7 @@ def wait_and_lock_host(host):
             logging.info("Host {} became available after {:.2f}s".format(host, wait_time))
             
         _hosts_busy.add(host)
-        logging.info("Successfully locked host: {}".format(host))
+        logging.debug("Successfully locked host: {}".format(host))
         
     except Exception as e:
         logging.error("Failed to lock host {}: {}".format(host, str(e)), exc_info=True)
