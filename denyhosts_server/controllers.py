@@ -32,7 +32,7 @@ def get_cracker(ip_address):
 
 @inlineCallbacks
 def handle_report_from_client(client_ip, timestamp, hosts, trxId=None):
-    log_memory_usage("start of handle_report_from_client")
+    utils.log_memory_usage("start of handle_report_from_client")
 
     for cracker_ip in hosts:
         validIP = False
@@ -77,10 +77,10 @@ def handle_report_from_client(client_ip, timestamp, hosts, trxId=None):
 
     # Add cleanup at the end
     if len(hosts) > 100:  # Only for large batches
-        force_garbage_collection()
+        utils.force_garbage_collection()
 
-    log_memory_usage("end of handle_report_from_client")
-    
+    utils.log_memory_usage("end of handle_report_from_client")
+
 # Note: lock cracker IP first!
 # Report merging algorithm by Anne Bezemer, see 
 # https://bugs.debian.org/cgi-bin/bugreport.cgi?bug=622697
@@ -375,7 +375,7 @@ def perform_maintenance(limit=None, legacy_limit=None):
         del old_reports
         
         # Small delay to prevent overwhelming the database
-        yield task.deferLater(reactor, 0.1, lambda: None)
+        yield utils.task.deferLater(utils.reactor, 0.1, lambda: None)
 
     # Handle legacy cleanup more efficiently
     logging.debug("Cleaning up legacy entries...")

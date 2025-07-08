@@ -208,7 +208,7 @@ def schedule_jobs():
     # Add memory cleanup job - run every 30 minutes
     if 'memory_cleanup_job' in globals() and memory_cleanup_job is not None:
         memory_cleanup_job.stop()
-    memory_cleanup_job = task.LoopingCall(periodic_memory_cleanup)
+    memory_cleanup_job = task.LoopingCall(utils.periodic_memory_cleanup)  # Changed this line
     memory_cleanup_job.start(1800, now=False)  # Every 30 minutes
 
 def configure_logging():
