@@ -104,8 +104,8 @@ def read_config(filename):
         dbparams["autocommit"] = _getboolean(_config, "database", "autocommit", True)
 
         # Connection pool - moderate sizing for your traffic
-        dbparams["cp_max"] = _getint(_config, "database", "cp_max", 15)  # Down from 20
-        dbparams["cp_min"] = _getint(_config, "database", "cp_min", 3)   # Down from 5
+        dbparams["cp_max"] = _getint(_config, "database", "cp_max", 5)  # Down from 20
+        dbparams["cp_min"] = _getint(_config, "database", "cp_min", 1)   # Down from 5
 
         # Faster timeouts for responsiveness
         dbparams["connect_timeout"] = _getint(_config, "database", "connect_timeout", 5)
