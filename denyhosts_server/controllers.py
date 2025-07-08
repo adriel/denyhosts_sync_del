@@ -280,6 +280,7 @@ def get_qualifying_crackers(min_reports, min_resilience, previous_timestamp,
 
     logging.debug("[TrxId:{}] Returning {} hosts".format(trxId, len(result)))
     returnValue(result)
+
 # Periodical database maintenance
 # From algorithm by Anne Bezemer, see https://bugs.debian.org/cgi-bin/bugreport.cgi?bug=622697
 # Expiry/maintenance every hour/day:
@@ -303,6 +304,12 @@ def perform_maintenance(limit = None, legacy_limit = None):
             now = int(time.time())
             legacy_limit = now - config.legacy_expiry_days * 24 * 3600
 
+        reports_count_result = yield database.run_query('SELECT COUNT(*) FROM reports WHERE latest_report_time < ?', (limit,))
+        total_reports_to_delete = reports_count_result[0][0]
+        legacy_count_result = yield database.run_query('SELECT COUNT(*) FROM legacy WHERE retrieved_time < ?', (legacy_limit,))
+        total_legacy_to_delete = legacy_count_result[0][0]
+        logging.info("Maintenance: Found {} reports and {} legacy entries to delete".format(total_reports_to_delete, total_legacy_to_delete))
+
         reports_deleted = 0
         crackers_deleted = 0
         legacy_deleted = 0
@@ -313,7 +320,7 @@ def perform_maintenance(limit = None, legacy_limit = None):
             old_reports = yield Report.find(where=["latest_report_time<?", limit], limit=batch_size)
             if len(old_reports) == 0:
                 break
-            logging.info("Removing batch of {} old reports".format(len(old_reports)))
+            logging.info("Maintenance: Removing batch of {} old reports".format(len(old_reports)))
             for report in old_reports:
                 cracker = yield report.cracker.get()
                 
@@ -343,19 +350,19 @@ def perform_maintenance(limit = None, legacy_limit = None):
                     utils.unlock_host(cracker.ip_address)
                 logging.info("Maintenance on report from {} for cracker {} done".format(report.ip_address, cracker.ip_address))
         
-        logging.info("Report cleanup complete, starting legacy cleanup...")
+        logging.info("Maintenance: Report cleanup complete, starting legacy cleanup...")
         legacy_reports = yield Legacy.find(where=["retrieved_time<?", legacy_limit])
         if legacy_reports is not None:
             for legacy in legacy_reports:
                 yield legacy.delete()
                 legacy_deleted += 1
         
-        logging.info("Legacy cleanup complete")
-        logging.info("Done maintenance job")
-        logging.info("Expired {} reports and {} hosts, plus {} hosts from the legacy list".format(reports_deleted, crackers_deleted, legacy_deleted))
+        logging.info("Maintenance: Legacy cleanup complete")
+        logging.info("Maintenance: Done maintenance job")
+        logging.info("Maintenance: Expired {} reports and {} hosts, plus {} hosts from the legacy list".format(reports_deleted, crackers_deleted, legacy_deleted))
     except Exception as e:
         logging.error("Maintenance job failed with exception: {}".format(e))
-        logging.exception("Full traceback:")
+        logging.exception("Maintenance - Full traceback:")
         raise
 
     returnValue(0)
