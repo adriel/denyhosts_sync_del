@@ -30,7 +30,7 @@ _hosts_busy = set()
 
 @inlineCallbacks
 def wait_and_lock_host(host):
-    logging.info("Attempting to lock host: {}".format(host))
+    logging.debug("Attempting to lock host: {}".format(host))
     
     wait_start = time.time()
     waited = False
