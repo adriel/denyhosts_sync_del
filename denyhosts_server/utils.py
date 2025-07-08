@@ -30,14 +30,29 @@ _hosts_busy = set()
 
 @inlineCallbacks
 def wait_and_lock_host(host):
+    logging.info("Attempting to lock host: {}".format(host))
+    
+    wait_start = time.time()
+    waited = False
+    
     try:
         while host in _hosts_busy:
-            logging.debug("waiting to update host {}, {} blocked now".format(host, len(_hosts_busy)))
-            yield task.deferLater(reactor, 0.01, lambda _:0, 0)
+            if not waited:  # Log only once when we start waiting
+                logging.info("Host {} is busy, waiting for release".format(host))
+                waited = True
+            yield task.deferLater(reactor, 0.01, lambda _: 0, 0)
+        
+        if waited:
+            wait_time = time.time() - wait_start
+            logging.info("Host {} became available after {:.2f}s".format(host, wait_time))
+            
         _hosts_busy.add(host)
+        logging.debug("Successfully locked host: {}".format(host))
+        
     except Exception as e:
-        logging.debug("Exception in locking {}: {}".format(host, str(e)), exc_info=True)
-
+        logging.error("Failed to lock host {}: {}".format(host, str(e)), exc_info=True)
+        raise
+    
     returnValue(0)
 
 def unlock_host(host):
