@@ -285,112 +285,64 @@ def get_qualifying_crackers(min_reports, min_resilience, previous_timestamp,
 # TODO remove reports by identified crackers
 
 @inlineCallbacks
-def perform_maintenance(limit=None, legacy_limit=None):
+def perform_maintenance(limit = None, legacy_limit = None):
     logging.info("Starting maintenance job...")
-    
-    if limit is None:
-        now = int(time.time())
-        limit = now - config.expiry_days * 24 * 3600
+    try:
+        if limit is None:
+            now = int(time.time())
+            limit = now - config.expiry_days * 24 * 3600
 
-    if legacy_limit is None:
-        now = int(time.time())
-        legacy_limit = now - config.legacy_expiry_days * 24 * 3600
+        if legacy_limit is None:
+            now = int(time.time())
+            legacy_limit = now - config.legacy_expiry_days * 24 * 3600
 
-    reports_deleted = 0
-    crackers_deleted = 0
-    legacy_deleted = 0
-
-    # Smaller batch size to reduce memory pressure
-    batch_size = 500  # Reduced from 1000
-    
-    # Process reports in batches with better memory management
-    while True:
-        # Get old reports with minimal data
-        old_reports = yield database.run_query("""
-            SELECT r.id, r.cracker_id, r.ip_address, c.ip_address as cracker_ip
-            FROM reports r
-            JOIN crackers c ON r.cracker_id = c.id
-            WHERE r.latest_report_time < ?
-            LIMIT ?
-        """, limit, batch_size)
-        
-        if not old_reports:
-            break
-            
-        logging.debug("Removing batch of {} old reports".format(len(old_reports)))
-        
-        # Group by cracker to minimize lock contention
-        cracker_reports = {}
-        for report_row in old_reports:
-            cracker_ip = report_row[3]
-            if cracker_ip not in cracker_reports:
-                cracker_reports[cracker_ip] = []
-            cracker_reports[cracker_ip].append({
-                'id': report_row[0],
-                'cracker_id': report_row[1],
-                'reporter_ip': report_row[2]
-            })
-        
-        # Process each cracker's reports
-        for cracker_ip, reports_list in cracker_reports.items():
-            yield utils.wait_and_lock_host(cracker_ip)
-            try:
-                # Get fresh cracker data
-                cracker = yield Cracker.find(where=['ip_address=?', cracker_ip], limit=1)
-                if cracker is None:
-                    # Cracker was already deleted, clean up orphaned reports
-                    for report_info in reports_list:
-                        yield database.run_operation("DELETE FROM reports WHERE id = ?", report_info['id'])
-                        reports_deleted += 1
-                    continue
-                
-                # Delete the reports
-                for report_info in reports_list:
-                    logging.debug("Maintenance: removing report from {} for cracker {}".format(
-                        report_info['reporter_ip'], cracker_ip))
-                    yield database.run_operation("DELETE FROM reports WHERE id = ?", report_info['id'])
-                    reports_deleted += 1
-
-                # Recalculate current_reports count efficiently
-                current_reports_count = yield database.run_query("""
-                    SELECT COUNT(DISTINCT ip_address) 
-                    FROM reports 
-                    WHERE cracker_id = ?
-                """, cracker.id)
-                
-                cracker.current_reports = current_reports_count[0][0] if current_reports_count else 0
-                yield cracker.save()
-
-                # Delete cracker if no reports left
-                if cracker.current_reports == 0:
-                    logging.debug("Maintenance: removing cracker {}".format(cracker.ip_address))
-                    yield cracker.delete()
-                    crackers_deleted += 1
-                    
-            finally:
-                utils.unlock_host(cracker_ip)
-        
-        # Clear references to help garbage collection
-        del cracker_reports
-        del old_reports
-        
-        # Small delay to prevent overwhelming the database
-        yield utils.task.deferLater(utils.reactor, 0.1, lambda: None)
-
-    # Handle legacy cleanup more efficiently
-    logging.debug("Cleaning up legacy entries...")
-    legacy_deleted = yield database.run_query("""
-        SELECT COUNT(*) FROM legacy WHERE retrieved_time < ?
-    """, legacy_limit)
-    
-    if legacy_deleted and legacy_deleted[0][0] > 0:
-        legacy_deleted = legacy_deleted[0][0]
-        yield database.run_operation("DELETE FROM legacy WHERE retrieved_time < ?", legacy_limit)
-    else:
+        reports_deleted = 0
+        crackers_deleted = 0
         legacy_deleted = 0
 
-    logging.info("Done maintenance job")
-    logging.info("Expired {} reports and {} hosts, plus {} hosts from the legacy list".format(reports_deleted, crackers_deleted, legacy_deleted))
+        batch_size = 1000
+    
+        while True:
+            old_reports = yield Report.find(where=["latest_report_time<?", limit], limit=batch_size)
+            if len(old_reports) == 0:
+                break
+            logging.info("Removing batch of {} old reports".format(len(old_reports)))
+            for report in old_reports:
+                cracker = yield report.cracker.get()
+                yield utils.wait_and_lock_host(cracker.ip_address)
+                try:
+                    logging.info("Maintenance: removing report from {} for cracker {}".format(report.ip_address, cracker.ip_address))
+                    yield report.cracker.clear()
+                    yield report.delete()
+                    reports_deleted += 1
+
+                    current_reports = yield cracker.reports.get(group='ip_address')
+                    cracker.current_reports = len(current_reports)
+                    yield cracker.save()
+
+                    if cracker.current_reports == 0:
+                        logging.info("Maintenance: removing cracker {}".format(cracker.ip_address))
+                        yield cracker.delete()
+                        crackers_deleted += 1
+                finally:
+                    utils.unlock_host(cracker.ip_address)
+                logging.info("Maintenance on report from {} for cracker {} done".format(report.ip_address, cracker.ip_address))
+        
+        logging.info("Report cleanup complete, starting legacy cleanup...")
+        legacy_reports = yield Legacy.find(where=["retrieved_time<?", legacy_limit])
+        if legacy_reports is not None:
+            for legacy in legacy_reports:
+                yield legacy.delete()
+                legacy_deleted += 1
+        
+        logging.info("Legacy cleanup complete")
+        logging.info("Done maintenance job")
+        logging.info("Expired {} reports and {} hosts, plus {} hosts from the legacy list".format(reports_deleted, crackers_deleted, legacy_deleted))
+    except Exception as e:
+        logging.error("Maintenance job failed with exception: {}".format(e))
+        logging.exception("Full traceback:")
+        raise
+
     returnValue(0)
 
 @inlineCallbacks
