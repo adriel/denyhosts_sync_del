@@ -20,6 +20,9 @@ import ipaddr
 import socket
 import uuid
 
+import gc
+import psutil
+
 from twisted.internet.defer import inlineCallbacks, returnValue
 from twisted.internet import reactor, task
 
@@ -112,5 +115,30 @@ class Timer:
     def getOngoing_time(self):
         ongoing_time = time.perf_counter() - self._start_time
         return ongoing_time
+
+# Memory optimisation functions
+def log_memory_usage(context=""):
+    """Log current memory usage"""
+    try:
+        process = psutil.Process()
+        memory_info = process.memory_info()
+        logging.debug("Memory usage {}: RSS={:.2f}MB, VMS={:.2f}MB".format(
+            context, memory_info.rss / 1024 / 1024, memory_info.vms / 1024 / 1024))
+    except Exception as e:
+        logging.debug("Could not get memory info: {}".format(e))
+
+def force_garbage_collection():
+    """Force garbage collection and log results"""
+    before = gc.get_count()
+    collected = gc.collect()
+    after = gc.get_count()
+    logging.debug("Garbage collection: collected {} objects, counts before: {}, after: {}".format(
+        collected, before, after))
+
+def periodic_memory_cleanup():
+    """Periodic memory cleanup function"""
+    log_memory_usage("before cleanup")
+    force_garbage_collection()
+    log_memory_usage("after cleanup")
 
 # vim: tabstop=8 expandtab shiftwidth=4 softtabstop=4

@@ -32,6 +32,8 @@ def get_cracker(ip_address):
 
 @inlineCallbacks
 def handle_report_from_client(client_ip, timestamp, hosts, trxId=None):
+    log_memory_usage("start of handle_report_from_client")
+
     for cracker_ip in hosts:
         validIP = False
         if not utils.is_valid_ip_address(cracker_ip):
@@ -73,6 +75,12 @@ def handle_report_from_client(client_ip, timestamp, hosts, trxId=None):
                 utils.unlock_host(cracker_ip)
             logging.debug("[TrxId:{}] Done adding report for {} from {}".format(trxId, cracker_ip,client_ip))
 
+    # Add cleanup at the end
+    if len(hosts) > 100:  # Only for large batches
+        force_garbage_collection()
+
+    log_memory_usage("end of handle_report_from_client")
+    
 # Note: lock cracker IP first!
 # Report merging algorithm by Anne Bezemer, see 
 # https://bugs.debian.org/cgi-bin/bugreport.cgi?bug=622697
@@ -133,136 +141,129 @@ def add_report_to_cracker(cracker, client_ip, when=None, trxId=None):
 def get_qualifying_crackers(min_reports, min_resilience, previous_timestamp,
         max_crackers, latest_added_hosts, trxId=None):
 
-    # Start measurement of elapsed time of that function to compare it with the max value (in seconds) from the config file
+    # Start measurement of elapsed time
     aTimer = utils.Timer()
     aTimer.start()
 
-    # Thank to Anne Bezemer for the algorithm in this function. 
-    # See https://bugs.debian.org/cgi-bin/bugreport.cgi?bug=622697
-   
-    # This query takes care of conditions (a) and (b)
-    # cracker_reports_data = yield database.runGetPossibleQualifyingCrackerQuery(min_reports, min_resilience, previous_timestamp)
     # If min_reports is 1, then resiliency value must be discarded
     if min_reports == 1:
         min_resilience = 0
     
-    # OPTIMIZED: Single query to get all crackers with their reports
-    # This replaces the N+1 query problem
-    cracker_reports_data = yield database.run_query("""
-        SELECT DISTINCT 
-            c.id, c.ip_address, c.first_time, c.latest_time, c.total_reports, c.current_reports, c.resiliency,
-            r.first_report_time, r.latest_report_time, r.ip_address as reporter_ip
-        FROM crackers c 
-        LEFT JOIN reports r ON c.id = r.cracker_id
-        WHERE (c.current_reports >= ?)
-            AND (c.resiliency >= ?)
-            AND (c.latest_time >= ?)
-        ORDER BY c.first_time DESC, r.first_report_time ASC
-        """, min_reports, min_resilience, previous_timestamp)
-  
-    if cracker_reports_data is None:
-        returnValue([])
-
-    # Group the data by cracker
-    crackers_data = {}
-    for row in cracker_reports_data:
-        cracker_id = row[0]
-        if cracker_id not in crackers_data:
-            crackers_data[cracker_id] = {
-                'cracker': {
-                    'id': row[0], 'ip_address': row[1], 'first_time': row[2],
-                    'latest_time': row[3], 'total_reports': row[4],
-                    'current_reports': row[5], 'resiliency': row[6]
-                },
-                'reports': []
-            }
-        
-        # Add report if it exists (LEFT JOIN might have NULLs)
-        if row[7] is not None:
-            crackers_data[cracker_id]['reports'].append({
-                'first_report_time': row[7],
-                'latest_report_time': row[8],
-                'ip_address': row[9]
-            })
-
-    logging.debug("[TrxId:{}] Retrieved {} potential crackers from database".format(trxId, len(crackers_data)))
-
-    # Now look for conditions (c) and (d) - SAME LOGIC AS ORIGINAL
     result = []
-    processed_count = 0  # Track what we actually process
+    processed_count = 0
+    batch_size = 100  # Process in small batches to avoid memory issues
+    offset = 0
+    
+    while len(result) < max_crackers:
+        # Get crackers in batches to avoid loading everything into memory
+        batch_crackers = yield database.run_query("""
+            SELECT DISTINCT 
+                c.id, c.ip_address, c.first_time, c.latest_time, 
+                c.total_reports, c.current_reports, c.resiliency
+            FROM crackers c 
+            WHERE (c.current_reports >= ?)
+                AND (c.resiliency >= ?)
+                AND (c.latest_time >= ?)
+            ORDER BY c.first_time DESC
+            LIMIT ? OFFSET ?
+            """, min_reports, min_resilience, previous_timestamp, batch_size, offset)
+        
+        if not batch_crackers:
+            break  # No more crackers to process
+            
+        # Process each cracker in the batch
+        for cracker_row in batch_crackers:
+            processed_count += 1
+            cracker_id = cracker_row[0]
+            cracker_ip = cracker_row[1]
+            
+            if cracker_ip in latest_added_hosts:
+                logging.debug("[TrxId:{}] Skipping {}, just reported by client".format(trxId, cracker_ip))
+                continue
 
-    for cracker_id, data in crackers_data.items():
-        processed_count += 1  # Increment for each cracker we examine
-        cracker_info = data['cracker']
-        reports = data['reports']
-        
-        if cracker_info['ip_address'] in latest_added_hosts:
-            logging.debug("[TrxId:{}] Skipping {}, just reported by client".format(trxId, cracker_info['ip_address']))
-            continue
+            # Create cracker object
+            cracker = Cracker(id=cracker_row[0], ip_address=cracker_row[1], 
+                             first_time=cracker_row[2], latest_time=cracker_row[3], 
+                             total_reports=cracker_row[4], current_reports=cracker_row[5], 
+                             resiliency=cracker_row[6])
+            
+            logging.debug("[TrxId:{}] Examining ".format(trxId) + str(cracker))
 
-        # Create cracker object (same as original)
-        cracker = Cracker(id=cracker_info['id'], ip_address=cracker_info['ip_address'], 
-                         first_time=cracker_info['first_time'], latest_time=cracker_info['latest_time'], 
-                         total_reports=cracker_info['total_reports'], current_reports=cracker_info['current_reports'], 
-                         resiliency=cracker_info['resiliency'])
-        
-        if cracker is None:
-            continue
-        logging.debug("[TrxId:{}] Examining ".format(trxId)+str(cracker))
-
-        # SAME LOGIC AS ORIGINAL - but using pre-loaded reports instead of N+1 queries
-        # Sort reports by first_report_time (equivalent to original orderby)
-        reports_sorted = sorted(reports, key=lambda x: x['first_report_time'])
-        
-        logging.debug("[TrxId:{}] r[m-1].first_report_time={}, previous_timestamp={}, nb={}".format(
-            trxId, reports_sorted[min_reports-1]['first_report_time'] if len(reports_sorted) >= min_reports else 'N/A', 
-            previous_timestamp, len(reports_sorted)))
-        
-        if (len(reports_sorted) >= min_reports and 
-            reports_sorted[min_reports-1]['first_report_time'] >= previous_timestamp): 
-            # condition (c) satisfied
-            logging.debug("[TrxId:{}] condition (c) satisfied - Appending {}".format(trxId, cracker.ip_address))
-            result.append(cracker.ip_address)
-        else:
-            logging.debug("[TrxId:{}] checking condition (d)...".format(trxId))
-            satisfied = False
-            for report in reports_sorted:
-                if (not satisfied and 
-                    report['latest_report_time'] >= previous_timestamp and
-                    report['latest_report_time'] - cracker.first_time >= min_resilience):
-                    logging.debug("[TrxId:{}]     d1".format(trxId))
-                    satisfied = True
-                if (report['latest_report_time'] <= previous_timestamp and 
-                    report['latest_report_time'] - cracker.first_time >= min_resilience):
-                    logging.debug("[TrxId:{}]     d2 failed".format(trxId))
-                    satisfied = False
-                    break
-            if satisfied:
-                logging.debug("[TrxId:{}] condition (d) satisfied - Appending {}".format(trxId, cracker.ip_address))
+            # Get reports for this specific cracker only
+            reports = yield database.run_query("""
+                SELECT first_report_time, latest_report_time, ip_address
+                FROM reports 
+                WHERE cracker_id = ?
+                ORDER BY first_report_time ASC
+                """, cracker_id)
+            
+            # Convert to dict format for compatibility
+            reports_data = [
+                {
+                    'first_report_time': r[0],
+                    'latest_report_time': r[1],
+                    'ip_address': r[2]
+                } for r in reports
+            ]
+            
+            logging.debug("[TrxId:{}] r[m-1].first_report_time={}, previous_timestamp={}, nb={}".format(
+                trxId, reports_data[min_reports-1]['first_report_time'] if len(reports_data) >= min_reports else 'N/A', 
+                previous_timestamp, len(reports_data)))
+            
+            # Same logic as original for conditions (c) and (d)
+            if (len(reports_data) >= min_reports and 
+                reports_data[min_reports-1]['first_report_time'] >= previous_timestamp): 
+                # condition (c) satisfied
+                logging.debug("[TrxId:{}] condition (c) satisfied - Appending {}".format(trxId, cracker.ip_address))
                 result.append(cracker.ip_address)
             else:
-                logging.debug("[TrxId:{}]     skipping {}".format(trxId, cracker.ip_address))
+                logging.debug("[TrxId:{}] checking condition (d)...".format(trxId))
+                satisfied = False
+                for report in reports_data:
+                    if (not satisfied and 
+                        report['latest_report_time'] >= previous_timestamp and
+                        report['latest_report_time'] - cracker.first_time >= min_resilience):
+                        logging.debug("[TrxId:{}]     d1".format(trxId))
+                        satisfied = True
+                    if (report['latest_report_time'] <= previous_timestamp and 
+                        report['latest_report_time'] - cracker.first_time >= min_resilience):
+                        logging.debug("[TrxId:{}]     d2 failed".format(trxId))
+                        satisfied = False
+                        break
+                if satisfied:
+                    logging.debug("[TrxId:{}] condition (d) satisfied - Appending {}".format(trxId, cracker.ip_address))
+                    result.append(cracker.ip_address)
+                else:
+                    logging.debug("[TrxId:{}]     skipping {}".format(trxId, cracker.ip_address))
+            
+            # Clear references to help garbage collection
+            del cracker
+            del reports_data
+            
+            # Check if processing should stop due to time limit or result count limit
+            elapsed_time = aTimer.getOngoing_time()
+            time_limit_reached = elapsed_time > config.max_processing_time_get_new_hosts
+            count_limit_reached = len(result) >= max_crackers
+
+            if time_limit_reached or count_limit_reached:
+                reasons = []
+                if time_limit_reached:
+                    reasons.append(f"time limit ({elapsed_time:.2f}s >= {config.max_processing_time_get_new_hosts:.2f}s)")
+                if count_limit_reached:
+                    reasons.append(f"count limit ({len(result)} >= {max_crackers})")
+
+                logging.info("[TrxId:{}] Breaking due to: {}. Processed {} crackers, found {} qualifying hosts".format(
+                    trxId, " and ".join(reasons), processed_count, len(result)))
+                break
         
-        # Check if processing should stop due to time limit or result count limit.
-        # Break the loop if either condition is met and log the reason(s).
-        elapsed_time = aTimer.getOngoing_time()
-        time_limit_reached = elapsed_time > config.max_processing_time_get_new_hosts
-        count_limit_reached = len(result) >= max_crackers
-
-        if time_limit_reached or count_limit_reached:
-            reasons = []
-            if time_limit_reached:
-                reasons.append(f"time limit ({elapsed_time:.2f}s >= {config.max_processing_time_get_new_hosts:.2f}s)")
-            if count_limit_reached:
-                reasons.append(f"count limit ({len(result)} >= {max_crackers})")
-
-            logging.info("[TrxId:{}] Breaking due to: {}. Processed {}/{} crackers, found {} qualifying hosts".format(
-                trxId, " and ".join(reasons), processed_count, len(crackers_data), len(result)))
+        # Break outer loop if we broke inner loop
+        if len(result) >= max_crackers or aTimer.getOngoing_time() > config.max_processing_time_get_new_hosts:
             break
-        
-    # Final summary with accurate counts
-    logging.debug("[TrxId:{}] Completed processing {}/{} crackers, returning {} hosts".format(
-        trxId, processed_count, len(crackers_data), len(result)))
+            
+        offset += batch_size
+    
+    logging.debug("[TrxId:{}] Completed processing {} crackers, returning {} hosts".format(
+        trxId, processed_count, len(result)))
 
     if len(result) < max_crackers:
         # Add results from legacy server
@@ -284,7 +285,7 @@ def get_qualifying_crackers(min_reports, min_resilience, previous_timestamp,
 # TODO remove reports by identified crackers
 
 @inlineCallbacks
-def perform_maintenance(limit = None, legacy_limit = None):
+def perform_maintenance(limit=None, legacy_limit=None):
     logging.info("Starting maintenance job...")
     
     if limit is None:
@@ -299,39 +300,94 @@ def perform_maintenance(limit = None, legacy_limit = None):
     crackers_deleted = 0
     legacy_deleted = 0
 
-    batch_size = 1000
-  
+    # Smaller batch size to reduce memory pressure
+    batch_size = 500  # Reduced from 1000
+    
+    # Process reports in batches with better memory management
     while True:
-        old_reports = yield Report.find(where=["latest_report_time<?", limit], limit=batch_size)
-        if len(old_reports) == 0:
+        # Get old reports with minimal data
+        old_reports = yield database.run_query("""
+            SELECT r.id, r.cracker_id, r.ip_address, c.ip_address as cracker_ip
+            FROM reports r
+            JOIN crackers c ON r.cracker_id = c.id
+            WHERE r.latest_report_time < ?
+            LIMIT ?
+        """, limit, batch_size)
+        
+        if not old_reports:
             break
+            
         logging.debug("Removing batch of {} old reports".format(len(old_reports)))
-        for report in old_reports:
-            cracker = yield report.cracker.get()
-            yield utils.wait_and_lock_host(cracker.ip_address)
+        
+        # Group by cracker to minimize lock contention
+        cracker_reports = {}
+        for report_row in old_reports:
+            cracker_ip = report_row[3]
+            if cracker_ip not in cracker_reports:
+                cracker_reports[cracker_ip] = []
+            cracker_reports[cracker_ip].append({
+                'id': report_row[0],
+                'cracker_id': report_row[1],
+                'reporter_ip': report_row[2]
+            })
+        
+        # Process each cracker's reports
+        for cracker_ip, reports_list in cracker_reports.items():
+            yield utils.wait_and_lock_host(cracker_ip)
             try:
-                logging.debug("Maintenance: removing report from {} for cracker {}".format(report.ip_address, cracker.ip_address))
-                yield report.cracker.clear()
-                yield report.delete()
-                reports_deleted += 1
+                # Get fresh cracker data
+                cracker = yield Cracker.find(where=['ip_address=?', cracker_ip], limit=1)
+                if cracker is None:
+                    # Cracker was already deleted, clean up orphaned reports
+                    for report_info in reports_list:
+                        yield database.run_operation("DELETE FROM reports WHERE id = ?", report_info['id'])
+                        reports_deleted += 1
+                    continue
+                
+                # Delete the reports
+                for report_info in reports_list:
+                    logging.debug("Maintenance: removing report from {} for cracker {}".format(
+                        report_info['reporter_ip'], cracker_ip))
+                    yield database.run_operation("DELETE FROM reports WHERE id = ?", report_info['id'])
+                    reports_deleted += 1
 
-                current_reports = yield cracker.reports.get(group='ip_address')
-                cracker.current_reports = len(current_reports)
+                # Recalculate current_reports count efficiently
+                current_reports_count = yield database.run_query("""
+                    SELECT COUNT(DISTINCT ip_address) 
+                    FROM reports 
+                    WHERE cracker_id = ?
+                """, cracker.id)
+                
+                cracker.current_reports = current_reports_count[0][0] if current_reports_count else 0
                 yield cracker.save()
 
+                # Delete cracker if no reports left
                 if cracker.current_reports == 0:
                     logging.debug("Maintenance: removing cracker {}".format(cracker.ip_address))
                     yield cracker.delete()
                     crackers_deleted += 1
+                    
             finally:
-                utils.unlock_host(cracker.ip_address)
-            logging.debug("Maintenance on report from {} for cracker {} done".format(report.ip_address, cracker.ip_address))
+                utils.unlock_host(cracker_ip)
+        
+        # Clear references to help garbage collection
+        del cracker_reports
+        del old_reports
+        
+        # Small delay to prevent overwhelming the database
+        yield task.deferLater(reactor, 0.1, lambda: None)
 
-    legacy_reports = yield Legacy.find(where=["retrieved_time<?", legacy_limit])
-    if legacy_reports is not None:
-        for legacy in legacy_reports:
-            yield legacy.delete()
-            legacy_deleted += 1
+    # Handle legacy cleanup more efficiently
+    logging.debug("Cleaning up legacy entries...")
+    legacy_deleted = yield database.run_query("""
+        SELECT COUNT(*) FROM legacy WHERE retrieved_time < ?
+    """, legacy_limit)
+    
+    if legacy_deleted and legacy_deleted[0][0] > 0:
+        legacy_deleted = legacy_deleted[0][0]
+        yield database.run_operation("DELETE FROM legacy WHERE retrieved_time < ?", legacy_limit)
+    else:
+        legacy_deleted = 0
 
     logging.info("Done maintenance job")
     logging.info("Expired {} reports and {} hosts, plus {} hosts from the legacy list".format(reports_deleted, crackers_deleted, legacy_deleted))

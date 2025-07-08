@@ -185,7 +185,7 @@ legacy_sync_job = None
 stats_job = None
 
 def schedule_jobs():
-    global maintenance_job, legacy_sync_job, stats_job
+    global maintenance_job, legacy_sync_job, stats_job, memory_cleanup_job
 
     # Reschedule maintenance job
     if maintenance_job is not None:
@@ -204,6 +204,12 @@ def schedule_jobs():
         stats_job.stop()
     stats_job = task.LoopingCall(stats.update_stats_cache)
     stats_job.start(config.stats_frequency, now=True)
+
+    # Add memory cleanup job - run every 30 minutes
+    if 'memory_cleanup_job' in globals() and memory_cleanup_job is not None:
+        memory_cleanup_job.stop()
+    memory_cleanup_job = task.LoopingCall(periodic_memory_cleanup)
+    memory_cleanup_job.start(1800, now=False)  # Every 30 minutes
 
 def configure_logging():
     # Remove all handlers associated with the root logger object.
