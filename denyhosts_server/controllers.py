@@ -304,11 +304,9 @@ def perform_maintenance(limit = None, legacy_limit = None):
             legacy_limit = now - config.legacy_expiry_days * 24 * 3600
         
         # Count total reports to be deleted
-        reports_count_result = yield database.run_query('SELECT COUNT(*) FROM reports WHERE latest_report_time < ?', (limit,))
-        total_reports_to_delete = reports_count_result[0][0]
-
-        legacy_count_result = yield database.run_query('SELECT COUNT(*) FROM legacy WHERE retrieved_time < ?', (legacy_limit,))
-        total_legacy_to_delete = legacy_count_result[0][0]
+        total_reports_to_delete = yield Report.find(where=["latest_report_time<?", limit], count=True)
+        total_legacy_to_delete = yield Legacy.find(where=["retrieved_time<?", legacy_limit], count=True)
+        
         logging.info("Found {} reports and {} legacy entries to delete".format(total_reports_to_delete, total_legacy_to_delete))
         
         reports_deleted = 0
