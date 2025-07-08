@@ -105,11 +105,11 @@ def read_config(filename):
         dbparams["autocommit"] = _getboolean(_config, "database", "autocommit", True)
 
         # OPTIMIZED: Reduced connection pool for lower memory usage
-        dbparams["cp_max"] = _getint(_config, "database", "cp_max", 5)   # Reduced from 15
-        dbparams["cp_min"] = _getint(_config, "database", "cp_min", 1)   # Reduced from 3
+        dbparams["cp_max"] = _getint(_config, "database", "cp_max", 15)   # Reduced from 15
+        dbparams["cp_min"] = _getint(_config, "database", "cp_min", 3)   # Reduced from 3
 
         # Faster timeouts for responsiveness
-        dbparams["connect_timeout"] = _getint(_config, "database", "connect_timeout", 15)
+        dbparams["connect_timeout"] = _getint(_config, "database", "connect_timeout", 25)
         
         # Memory optimization settings
         dbparams["cp_noisy"] = _getboolean(_config, "database", "cp_noisy", False)  # Reduce logging overhead
