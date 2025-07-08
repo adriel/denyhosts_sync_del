@@ -316,6 +316,14 @@ def perform_maintenance(limit = None, legacy_limit = None):
             logging.info("Removing batch of {} old reports".format(len(old_reports)))
             for report in old_reports:
                 cracker = yield report.cracker.get()
+                
+                # FIX: Check if cracker exists before proceeding
+                if cracker is None:
+                    logging.warning("Maintenance: report {} has no associated cracker, removing orphaned report".format(report.id))
+                    yield report.delete()
+                    reports_deleted += 1
+                    continue
+                
                 yield utils.wait_and_lock_host(cracker.ip_address)
                 try:
                     logging.info("Maintenance: removing report from {} for cracker {}".format(report.ip_address, cracker.ip_address))
