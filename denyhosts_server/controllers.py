@@ -34,6 +34,13 @@ def get_cracker(ip_address):
 def handle_report_from_client(client_ip, timestamp, hosts, trxId=None):
     utils.log_memory_usage("start of handle_report_from_client")
 
+    try:
+        test_result = yield database.run_query("SELECT 1")
+        logging.info("[TrxId:{}] Database connection test passed".format(trxId))
+    except Exception as e:
+        logging.error("[TrxId:{}] Database connection failed: {}".format(trxId, str(e)))
+        raise
+
     for cracker_ip in hosts:
         validIP = False
         if not utils.is_valid_ip_address(cracker_ip):
