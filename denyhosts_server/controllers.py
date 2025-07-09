@@ -159,105 +159,105 @@ def get_qualifying_crackers(min_reports, min_resilience, previous_timestamp,
     result = []
     processed_count = 0
     
-        # Get all qualifying crackers at once
-        all_crackers = yield database.run_query("""
-            SELECT DISTINCT 
-                c.id, c.ip_address, c.first_time, c.latest_time, 
-                c.total_reports, c.current_reports, c.resiliency
-            FROM crackers c 
-            WHERE (c.current_reports >= ?)
-                AND (c.resiliency >= ?)
-                AND (c.latest_time >= ?)
-            ORDER BY c.first_time DESC
-            """, min_reports, min_resilience, previous_timestamp)
+    # Get all qualifying crackers at once
+    all_crackers = yield database.run_query("""
+        SELECT DISTINCT 
+            c.id, c.ip_address, c.first_time, c.latest_time, 
+            c.total_reports, c.current_reports, c.resiliency
+        FROM crackers c 
+        WHERE (c.current_reports >= ?)
+            AND (c.resiliency >= ?)
+            AND (c.latest_time >= ?)
+        ORDER BY c.first_time DESC
+        """, min_reports, min_resilience, previous_timestamp)
+    
+    # Process each cracker
+    for cracker_row in all_crackers:
+        processed_count += 1
+        cracker_id = cracker_row[0]
+        cracker_ip = cracker_row[1]
         
-        # Process each cracker
-        for cracker_row in all_crackers:
-            processed_count += 1
-            cracker_id = cracker_row[0]
-            cracker_ip = cracker_row[1]
-            
-            if cracker_ip in latest_added_hosts:
-                logging.debug("[TrxId:{}] Skipping {}, just reported by client".format(trxId, cracker_ip))
-                continue
+        if cracker_ip in latest_added_hosts:
+            logging.debug("[TrxId:{}] Skipping {}, just reported by client".format(trxId, cracker_ip))
+            continue
 
-            # Create cracker object
-            cracker = Cracker(id=cracker_row[0], ip_address=cracker_row[1], 
-                            first_time=cracker_row[2], latest_time=cracker_row[3], 
-                            total_reports=cracker_row[4], current_reports=cracker_row[5], 
-                            resiliency=cracker_row[6])
-            
-            logging.debug("[TrxId:{}] Examining ".format(trxId) + str(cracker))
+        # Create cracker object
+        cracker = Cracker(id=cracker_row[0], ip_address=cracker_row[1], 
+                         first_time=cracker_row[2], latest_time=cracker_row[3], 
+                         total_reports=cracker_row[4], current_reports=cracker_row[5], 
+                         resiliency=cracker_row[6])
+        
+        logging.debug("[TrxId:{}] Examining ".format(trxId) + str(cracker))
 
-            # Get reports for this specific cracker only
-            reports = yield database.run_query("""
-                SELECT first_report_time, latest_report_time, ip_address
-                FROM reports 
-                WHERE cracker_id = ?
-                ORDER BY first_report_time ASC
-                """, cracker_id)
-            
-            # Convert to dict format for compatibility
-            reports_data = [
-                {
-                    'first_report_time': r[0],
-                    'latest_report_time': r[1],
-                    'ip_address': r[2]
-                } for r in reports
-            ]
-            
-            logging.debug("[TrxId:{}] r[m-1].first_report_time={}, previous_timestamp={}, nb={}".format(
-                trxId, reports_data[min_reports-1]['first_report_time'] if len(reports_data) >= min_reports else 'N/A', 
-                previous_timestamp, len(reports_data)))
-            
-            # Same logic as original for conditions (c) and (d)
-            if (len(reports_data) >= min_reports and 
-                reports_data[min_reports-1]['first_report_time'] >= previous_timestamp): 
-                # condition (c) satisfied
-                logging.debug("[TrxId:{}] condition (c) satisfied - Appending {}".format(trxId, cracker.ip_address))
+        # Get reports for this specific cracker only
+        reports = yield database.run_query("""
+            SELECT first_report_time, latest_report_time, ip_address
+            FROM reports 
+            WHERE cracker_id = ?
+            ORDER BY first_report_time ASC
+            """, cracker_id)
+        
+        # Convert to dict format for compatibility
+        reports_data = [
+            {
+                'first_report_time': r[0],
+                'latest_report_time': r[1],
+                'ip_address': r[2]
+            } for r in reports
+        ]
+        
+        logging.debug("[TrxId:{}] r[m-1].first_report_time={}, previous_timestamp={}, nb={}".format(
+            trxId, reports_data[min_reports-1]['first_report_time'] if len(reports_data) >= min_reports else 'N/A', 
+            previous_timestamp, len(reports_data)))
+        
+        # Same logic as original for conditions (c) and (d)
+        if (len(reports_data) >= min_reports and 
+            reports_data[min_reports-1]['first_report_time'] >= previous_timestamp): 
+            # condition (c) satisfied
+            logging.debug("[TrxId:{}] condition (c) satisfied - Appending {}".format(trxId, cracker.ip_address))
+            result.append(cracker.ip_address)
+        else:
+            logging.debug("[TrxId:{}] checking condition (d)...".format(trxId))
+            satisfied = False
+            for report in reports_data:
+                if (not satisfied and 
+                    report['latest_report_time'] >= previous_timestamp and
+                    report['latest_report_time'] - cracker.first_time >= min_resilience):
+                    logging.debug("[TrxId:{}]     d1".format(trxId))
+                    satisfied = True
+                if (report['latest_report_time'] <= previous_timestamp and 
+                    report['latest_report_time'] - cracker.first_time >= min_resilience):
+                    logging.debug("[TrxId:{}]     d2 failed".format(trxId))
+                    satisfied = False
+                    break
+            if satisfied:
+                logging.debug("[TrxId:{}] condition (d) satisfied - Appending {}".format(trxId, cracker.ip_address))
                 result.append(cracker.ip_address)
             else:
-                logging.debug("[TrxId:{}] checking condition (d)...".format(trxId))
-                satisfied = False
-                for report in reports_data:
-                    if (not satisfied and 
-                        report['latest_report_time'] >= previous_timestamp and
-                        report['latest_report_time'] - cracker.first_time >= min_resilience):
-                        logging.debug("[TrxId:{}]     d1".format(trxId))
-                        satisfied = True
-                    if (report['latest_report_time'] <= previous_timestamp and 
-                        report['latest_report_time'] - cracker.first_time >= min_resilience):
-                        logging.debug("[TrxId:{}]     d2 failed".format(trxId))
-                        satisfied = False
-                        break
-                if satisfied:
-                    logging.debug("[TrxId:{}] condition (d) satisfied - Appending {}".format(trxId, cracker.ip_address))
-                    result.append(cracker.ip_address)
-                else:
-                    logging.debug("[TrxId:{}]     skipping {}".format(trxId, cracker.ip_address))
-            
-            # Clear references to help garbage collection
-            del cracker
-            del reports_data
-            
-            # Check if processing should stop due to time limit or result count limit
-            elapsed_time = aTimer.getOngoing_time()
-            time_limit_reached = elapsed_time > config.max_processing_time_get_new_hosts
-            count_limit_reached = len(result) >= max_crackers
-
-            if time_limit_reached or count_limit_reached:
-                reasons = []
-                if time_limit_reached:
-                    reasons.append(f"time limit ({elapsed_time:.2f}s >= {config.max_processing_time_get_new_hosts:.2f}s)")
-                if count_limit_reached:
-                    reasons.append(f"count limit ({len(result)} >= {max_crackers})")
-
-                logging.info("[TrxId:{}] Breaking due to: {}. Processed {} crackers, found {} qualifying hosts".format(
-                    trxId, " and ".join(reasons), processed_count, len(result)))
-                break
+                logging.debug("[TrxId:{}]     skipping {}".format(trxId, cracker.ip_address))
         
-        logging.debug("[TrxId:{}] Completed processing {} crackers, returning {} hosts".format(
-            trxId, processed_count, len(result)))
+        # Clear references to help garbage collection
+        del cracker
+        del reports_data
+        
+        # Check if processing should stop due to time limit or result count limit
+        elapsed_time = aTimer.getOngoing_time()
+        time_limit_reached = elapsed_time > config.max_processing_time_get_new_hosts
+        count_limit_reached = len(result) >= max_crackers
+
+        if time_limit_reached or count_limit_reached:
+            reasons = []
+            if time_limit_reached:
+                reasons.append(f"time limit ({elapsed_time:.2f}s >= {config.max_processing_time_get_new_hosts:.2f}s)")
+            if count_limit_reached:
+                reasons.append(f"count limit ({len(result)} >= {max_crackers})")
+
+            logging.info("[TrxId:{}] Breaking due to: {}. Processed {} crackers, found {} qualifying hosts".format(
+                trxId, " and ".join(reasons), processed_count, len(result)))
+            break
+    
+    logging.debug("[TrxId:{}] Completed processing {} crackers, returning {} hosts".format(
+        trxId, processed_count, len(result)))
 
     if len(result) < max_crackers:
         # Add results from legacy server
@@ -267,7 +267,7 @@ def get_qualifying_crackers(min_reports, min_resilience, previous_timestamp,
 
     logging.debug("[TrxId:{}] Returning {} hosts".format(trxId, len(result)))
     returnValue(result)
-
+    
 # Periodical database maintenance
 # From algorithm by Anne Bezemer, see https://bugs.debian.org/cgi-bin/bugreport.cgi?bug=622697
 # Expiry/maintenance every hour/day:
