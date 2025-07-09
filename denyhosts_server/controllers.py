@@ -158,7 +158,7 @@ def get_qualifying_crackers(min_reports, min_resilience, previous_timestamp,
     
     result = []
     processed_count = 0
-    batch_size = 100  # Process in small batches to avoid memory issues
+    batch_size = 5000  # Process in small batches to avoid memory issues
     offset = 0
     
     while len(result) < max_crackers:
