@@ -158,12 +158,9 @@ def get_qualifying_crackers(min_reports, min_resilience, previous_timestamp,
     
     result = []
     processed_count = 0
-    batch_size = 5000  # Process in small batches to avoid memory issues
-    offset = 0
     
-    while len(result) < max_crackers:
-        # Get crackers in batches to avoid loading everything into memory
-        batch_crackers = yield database.run_query("""
+        # Get all qualifying crackers at once
+        all_crackers = yield database.run_query("""
             SELECT DISTINCT 
                 c.id, c.ip_address, c.first_time, c.latest_time, 
                 c.total_reports, c.current_reports, c.resiliency
@@ -172,14 +169,10 @@ def get_qualifying_crackers(min_reports, min_resilience, previous_timestamp,
                 AND (c.resiliency >= ?)
                 AND (c.latest_time >= ?)
             ORDER BY c.first_time DESC
-            LIMIT ? OFFSET ?
-            """, min_reports, min_resilience, previous_timestamp, batch_size, offset)
+            """, min_reports, min_resilience, previous_timestamp)
         
-        if not batch_crackers:
-            break  # No more crackers to process
-            
-        # Process each cracker in the batch
-        for cracker_row in batch_crackers:
+        # Process each cracker
+        for cracker_row in all_crackers:
             processed_count += 1
             cracker_id = cracker_row[0]
             cracker_ip = cracker_row[1]
@@ -190,9 +183,9 @@ def get_qualifying_crackers(min_reports, min_resilience, previous_timestamp,
 
             # Create cracker object
             cracker = Cracker(id=cracker_row[0], ip_address=cracker_row[1], 
-                             first_time=cracker_row[2], latest_time=cracker_row[3], 
-                             total_reports=cracker_row[4], current_reports=cracker_row[5], 
-                             resiliency=cracker_row[6])
+                            first_time=cracker_row[2], latest_time=cracker_row[3], 
+                            total_reports=cracker_row[4], current_reports=cracker_row[5], 
+                            resiliency=cracker_row[6])
             
             logging.debug("[TrxId:{}] Examining ".format(trxId) + str(cracker))
 
@@ -263,14 +256,8 @@ def get_qualifying_crackers(min_reports, min_resilience, previous_timestamp,
                     trxId, " and ".join(reasons), processed_count, len(result)))
                 break
         
-        # Break outer loop if we broke inner loop
-        if len(result) >= max_crackers or aTimer.getOngoing_time() > config.max_processing_time_get_new_hosts:
-            break
-            
-        offset += batch_size
-    
-    logging.debug("[TrxId:{}] Completed processing {} crackers, returning {} hosts".format(
-        trxId, processed_count, len(result)))
+        logging.debug("[TrxId:{}] Completed processing {} crackers, returning {} hosts".format(
+            trxId, processed_count, len(result)))
 
     if len(result) < max_crackers:
         # Add results from legacy server
