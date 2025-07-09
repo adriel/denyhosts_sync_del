@@ -314,55 +314,59 @@ def perform_maintenance(limit = None, legacy_limit = None):
         crackers_deleted = 0
         legacy_deleted = 0
 
-        # BULK OPERATIONS - This is the key change!
-        
-        # 1. Update cracker current_reports counts in bulk BEFORE deleting reports
-        logging.info("Maintenance: Updating cracker current_reports counts...")
-        yield database.run_query("""
-            UPDATE crackers 
-            SET current_reports = (
-                SELECT COUNT(DISTINCT r.ip_address)
-                FROM reports r 
-                WHERE r.cracker_id = crackers.id 
-                AND r.latest_report_time >= ?
-            )
-            WHERE id IN (
-                SELECT DISTINCT cracker_id 
-                FROM reports 
-                WHERE latest_report_time < ?
-            )
-        """, limit, limit)
+        batch_size = 1000
+    
+        while True:
+            old_reports = yield Report.find(where=["latest_report_time<?", limit], limit=batch_size)
+            if len(old_reports) == 0:
+                break
+            logging.info("Maintenance: Removing batch of {} old reports".format(len(old_reports)))
+            for report in old_reports:
+                cracker = yield report.cracker.get()
+                
+                # FIX: Check if cracker exists before proceeding
+                if cracker is None:
+                    logging.warning("Maintenance: report {} has no associated cracker, removing orphaned report".format(report.id))
+                    yield report.delete()
+                    reports_deleted += 1
+                    continue
+                
+                yield utils.wait_and_lock_host(cracker.ip_address)
+                try:
+                    logging.info("Maintenance: removing report from {} for cracker {}".format(report.ip_address, cracker.ip_address))
+                    yield report.cracker.clear()
+                    yield report.delete()
+                    reports_deleted += 1
 
-        # 2. Delete all expired reports in one operation
-        logging.info("Maintenance: Deleting expired reports...")
-        delete_result = yield database.run_query("DELETE FROM reports WHERE latest_report_time < ?", limit)
-        reports_deleted = delete_result.rowcount if hasattr(delete_result, 'rowcount') else total_reports_to_delete
+                    current_reports = yield cracker.reports.get(group='ip_address')
+                    cracker.current_reports = len(current_reports)
+                    yield cracker.save()
+
+                    if cracker.current_reports == 0:
+                        logging.info("Maintenance: removing cracker {}".format(cracker.ip_address))
+                        yield cracker.delete()
+                        crackers_deleted += 1
+                finally:
+                    utils.unlock_host(cracker.ip_address)
+                logging.info("Maintenance on report from {} for cracker {} done".format(report.ip_address, cracker.ip_address))
         
-        # 3. Delete crackers with no reports left in one operation
-        logging.info("Maintenance: Deleting crackers with no reports...")
-        cracker_delete_result = yield database.run_query("""
-            DELETE FROM crackers 
-            WHERE current_reports = 0 
-            AND id NOT IN (SELECT DISTINCT cracker_id FROM reports WHERE cracker_id IS NOT NULL)
-        """)
-        crackers_deleted = cracker_delete_result.rowcount if hasattr(cracker_delete_result, 'rowcount') else 0
-        
-        # 4. Legacy cleanup (bulk operation)
         logging.info("Maintenance: Report cleanup complete, starting legacy cleanup...")
-        legacy_delete_result = yield database.run_query("DELETE FROM legacy WHERE retrieved_time < ?", legacy_limit)
-        legacy_deleted = legacy_delete_result.rowcount if hasattr(legacy_delete_result, 'rowcount') else total_legacy_to_delete
+        legacy_reports = yield Legacy.find(where=["retrieved_time<?", legacy_limit])
+        if legacy_reports is not None:
+            for legacy in legacy_reports:
+                yield legacy.delete()
+                legacy_deleted += 1
         
         logging.info("Maintenance: Legacy cleanup complete")
         logging.info("Maintenance: Done maintenance job")
         logging.info("Maintenance: Expired {} reports and {} hosts, plus {} hosts from the legacy list".format(reports_deleted, crackers_deleted, legacy_deleted))
-        
     except Exception as e:
         logging.error("Maintenance job failed with exception: {}".format(e))
         logging.exception("Maintenance - Full traceback:")
         raise
 
     returnValue(0)
-    
+
 @inlineCallbacks
 def download_from_legacy_server():
     if config.legacy_server is None or config.legacy_server == "":
