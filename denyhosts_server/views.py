@@ -133,7 +133,6 @@ class Server(xmlrpc.XMLRPC):
         returnValue(result)
 
     @withRequest
-    @inlineCallbacks
     def xmlrpc_version_report(self, request, version_info):
         """
         Handle version reporting from denyhosts clients.
@@ -146,13 +145,26 @@ class Server(xmlrpc.XMLRPC):
             x_real_ip = request.requestHeaders.getRawHeaders("X-Real-IP")
             remote_ip = x_real_ip[0] if x_real_ip else request.getClientIP()
 
-            logging.info("[TrxId:{}] version_report from {}: {}".format(trxId, remote_ip, version_info))
+            # Parse and log version info more clearly
+            if isinstance(version_info, list) and len(version_info) >= 2:
+                denyhosts_version = version_info[0]
+                sync_version = version_info[1] 
+                logging.info("[TrxId:{}] version_report from {}: DenyHosts v{}, Sync v{}".format(
+                    trxId, remote_ip, denyhosts_version, sync_version))
+            else:
+                logging.info("[TrxId:{}] version_report from {}: {}".format(trxId, remote_ip, version_info))
 
             # You can optionally store this information in the database
             # or perform any other processing you need
 
             # Return success (0) or any other appropriate response
-            returnValue(0)
+            return 0
+
+        except Exception as e:
+            logging.error("[TrxId:{}] Error in version_report: {}".format(trxId, str(e)))
+            raise xmlrpc.Fault(106, "[TrxId:{}] Error processing version report: {}".format(trxId, str(e)))
+                
+
 
         except Exception as e:
             logging.error("[TrxId:{}] Error in version_report: {}".format(trxId, str(e)))
