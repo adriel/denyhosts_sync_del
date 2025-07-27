@@ -149,7 +149,7 @@ class Server(xmlrpc.XMLRPC):
             if isinstance(version_info, list) and len(version_info) >= 2:
                 denyhosts_version = version_info[0]
                 sync_version = version_info[1] 
-                logging.info("[TrxId:{}] version_report from {}: DenyHosts v{}, Sync v{}".format(
+                logging.info("[TrxId:{}] version_report from {}: Python v{}, Denyhosts v{}".format(
                     trxId, remote_ip, denyhosts_version, sync_version))
             else:
                 logging.info("[TrxId:{}] version_report from {}: {}".format(trxId, remote_ip, version_info))
