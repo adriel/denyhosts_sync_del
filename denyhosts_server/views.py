@@ -132,6 +132,32 @@ class Server(xmlrpc.XMLRPC):
         logging.info("[TrxId:{0}] get_new_hosts completed in {1:.3f} seconds returning {2} hosts".format(trxId, t.getElapsed_time(), len(result['hosts'])))
         returnValue(result)
 
+    @withRequest
+    @inlineCallbacks
+    def xmlrpc_version_report(self, request, version_info):
+        """
+        Handle version reporting from denyhosts clients.
+        This method logs the client version information for monitoring purposes.
+        """
+        # Identify the transaction for logging correlation
+        trxId = utils.generateTrxId()
+
+        try:
+            x_real_ip = request.requestHeaders.getRawHeaders("X-Real-IP")
+            remote_ip = x_real_ip[0] if x_real_ip else request.getClientIP()
+
+            logging.info("[TrxId:{}] version_report from {}: {}".format(trxId, remote_ip, version_info))
+
+            # You can optionally store this information in the database
+            # or perform any other processing you need
+
+            # Return success (0) or any other appropriate response
+            returnValue(0)
+
+        except Exception as e:
+            logging.error("[TrxId:{}] Error in version_report: {}".format(trxId, str(e)))
+            raise xmlrpc.Fault(106, "[TrxId:{}] Error processing version report: {}".format(trxId, str(e)))
+        
 class WebResource(Resource):
     #isLeaf = True
 
