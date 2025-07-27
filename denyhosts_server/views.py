@@ -70,19 +70,17 @@ class Server(xmlrpc.XMLRPC):
                 # Continue processing - peering failure shouldn't fail the client request
 
         except xmlrpc.Fault as e:
-            # Stop timer before re-raising xmlrpc.Fault
-            trx_timer.stop()
+            # Re-raise xmlrpc.Fault without modification
             raise e
         except Exception as e:
-            # Stop timer before raising new fault
-            trx_timer.stop()
             log.err(e, f"[TrxId:{trxId}] Exception in add_hosts: {e}")
             raise xmlrpc.Fault(104, "[TrxId:{}] Error adding hosts: {}".format(trxId, str(e)))
+        finally:
+            # Always stop the timer regardless of success or failure
+            trx_timer.stop()
+            elapsed_time = trx_timer.getElapsed_time()
+            logging.info("[TrxId:{0}] add_hosts completed in {1:.3f} seconds".format(trxId, elapsed_time))
 
-        # Stop the Timer and log trx data (only reached on success)
-        trx_timer.stop()
-        elapsed_time = trx_timer.getElapsed_time()
-        logging.info("[TrxId:{0}] add_hosts completed in {1:.3f} seconds".format(trxId, elapsed_time))
         returnValue(0)
 
     @withRequest
@@ -93,8 +91,8 @@ class Server(xmlrpc.XMLRPC):
         trxId= utils.generateTrxId()
 
         # Timer to monitor the trx duration
-        t = utils.Timer()
-        t.start()
+        trx_timer = utils.Timer()
+        trx_timer.start()
 
         try:
             x_real_ip = request.requestHeaders.getRawHeaders("X-Real-IP")
@@ -159,8 +157,6 @@ class Server(xmlrpc.XMLRPC):
                     # Option 3: Return empty result (commented out alternative)
                     # logging.warning("[TrxId:{}] Request from known cracker IP {} - returning empty result".format(trxId, remote_ip))
                     # result = {'timestamp': str(int(time.time())), 'hosts': []}
-                    # t.stop()
-                    # logging.info("[TrxId:{0}] get_new_hosts completed in {1:.3f} seconds returning 0 hosts (cracker IP)".format(trxId, t.getElapsed_time()))
                     # returnValue(result)
                 else:
                     logging.debug("[TrxId:{}] Client IP {} is not a known cracker - proceeding".format(trxId, remote_ip))
@@ -173,15 +169,26 @@ class Server(xmlrpc.XMLRPC):
                     threshold, resiliency, timestamp, 
                     config.max_reported_crackers, set(hosts_added), trxId)
             logging.debug("[TrxId:{}] get_new_hosts returning: {}".format(trxId, result))
+            
         except xmlrpc.Fault as e:
             raise e
         except Exception as e:
             log.err(_why="[TrxId:{}] Exception in xmlrpc_get_new_hosts".format(trxId))
             raise xmlrpc.Fault(105, "[TrxId:{}] Error in get_new_hosts: {}".format(trxId, str(e)))
+        finally:
+            # Always stop the timer and log transaction data regardless of success or failure
+            trx_timer.stop()
+            elapsed_time = trx_timer.getElapsed_time()
+            # Only log host count on success (result will be defined)
+            try:
+                host_count = len(result['hosts']) if 'result' in locals() and result else 0
+                logging.info("[TrxId:{0}] get_new_hosts completed in {1:.3f} seconds returning {2} hosts".format(
+                    trxId, elapsed_time, host_count))
+            # If result is not available (due to exception), just log the timing
+            except Exception as e:
+                logging.warning("[TrxId:{}] Logging hosts failed: {} — falling back to timing log only".format(trxId, str(e)))
+                logging.info("[TrxId:{0}] get_new_hosts completed in {1:.3f} seconds (with error)".format(trxId, elapsed_time))
 
-        # Stop the Timer and log trx data
-        t.stop()
-        logging.info("[TrxId:{0}] get_new_hosts completed in {1:.3f} seconds returning {2} hosts".format(trxId, t.getElapsed_time(), len(result['hosts'])))
         returnValue(result)
 
     @withRequest
