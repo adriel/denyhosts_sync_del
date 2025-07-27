@@ -40,6 +40,7 @@ class Server(xmlrpc.XMLRPC):
 
     @withRequest
     @inlineCallbacks
+    # DenyHosts clients call this to report new attacking IPs TO the server
     def xmlrpc_add_hosts(self, request, hosts):
         # Identify the transaction for logging correlation
         trxId = utils.generateTrxId()
@@ -77,6 +78,7 @@ class Server(xmlrpc.XMLRPC):
 
     @withRequest
     @inlineCallbacks
+    # DenyHosts clients call this to get attacking IPs FROM the server
     def xmlrpc_get_new_hosts(self, request, timestamp, threshold, hosts_added, resiliency):
         # Identify the transaction for logging correlation
         trxId= utils.generateTrxId()
@@ -113,6 +115,25 @@ class Server(xmlrpc.XMLRPC):
             # TODO: maybe refuse timestamp from far past because it will 
             # cause much work? OTOH, denyhosts will use timestamp=0 for 
             # the first run!
+            # ### Not currently used, as server handles curret load fine
+            # ### Plus, the db only goes back to 1 year of data.
+            # # Check for timestamps from far past that could cause excessive work
+            # # Allow timestamp=0 for legitimate first-run scenarios
+            # # Reject timestamps older than a reasonable threshold (e.g., 1 year)
+            # max_age_seconds = 365 * 24 * 3600  # 1 year
+            # min_allowed_timestamp = now - max_age_seconds
+            
+            # if timestamp != 0 and timestamp < min_allowed_timestamp:
+            #     age_days = (now - timestamp) // (24 * 3600)
+            #     logging.warning("[TrxId:{}] Timestamp too old from client {}: {} days old (timestamp: {})".format(
+            #         trxId, remote_ip, age_days, timestamp))
+            #     raise xmlrpc.Fault(108, "[TrxId:{}] Timestamp too old ({} days). Use timestamp=0 for initial sync.".format(
+            #         trxId, age_days))
+            # elif timestamp == 0:
+            #     logging.info("[TrxId:{}] Initial sync request (timestamp=0) from {}".format(trxId, remote_ip))
+            # else:
+            #     age_hours = (now - timestamp) // 3600
+            #     logging.debug("[TrxId:{}] Normal sync request from {} (age: {} hours)".format(trxId, remote_ip, age_hours))
             
             # Check if client IP is a known cracker
             if utils.is_valid_ip_address(remote_ip):
