@@ -113,7 +113,29 @@ class Server(xmlrpc.XMLRPC):
             # TODO: maybe refuse timestamp from far past because it will 
             # cause much work? OTOH, denyhosts will use timestamp=0 for 
             # the first run!
-            # TODO: check if client IP is a known cracker
+            
+            # Check if client IP is a known cracker
+            if utils.is_valid_ip_address(remote_ip):
+                client_cracker = yield controllers.get_cracker(remote_ip)
+                if client_cracker is not None:
+                    # Client IP is a known cracker - decide how to handle this
+                    # Option 1: Reject the request entirely
+                    logging.warning("[TrxId:{}] Request from known cracker IP {} - rejecting request".format(trxId, remote_ip))
+                    raise xmlrpc.Fault(107, "[TrxId:{}] Request from known malicious IP address.".format(trxId))
+                    
+                    # Option 2: Log but allow (commented out alternative)
+                    # logging.warning("[TrxId:{}] Request from known cracker IP {} - allowing but logging".format(trxId, remote_ip))
+                    
+                    # Option 3: Return empty result (commented out alternative)
+                    # logging.warning("[TrxId:{}] Request from known cracker IP {} - returning empty result".format(trxId, remote_ip))
+                    # result = {'timestamp': str(int(time.time())), 'hosts': []}
+                    # t.stop()
+                    # logging.info("[TrxId:{0}] get_new_hosts completed in {1:.3f} seconds returning 0 hosts (cracker IP)".format(trxId, t.getElapsed_time()))
+                    # returnValue(result)
+                else:
+                    logging.debug("[TrxId:{}] Client IP {} is not a known cracker - proceeding".format(trxId, remote_ip))
+            else:
+                logging.debug("[TrxId:{}] Client IP {} is not a valid public IP - proceeding".format(trxId, remote_ip))
 
             result = {}
             result['timestamp'] = str(int(time.time()))
