@@ -46,34 +46,43 @@ class Server(xmlrpc.XMLRPC):
         trxId = utils.generateTrxId()
 
         # Timer to monitor the trx duration
-        t = utils.Timer()
-        t.start()
+        trx_timer = utils.Timer()
+        trx_timer.start()
 
         try:
             x_real_ip = request.requestHeaders.getRawHeaders("X-Real-IP")
             remote_ip = x_real_ip[0] if x_real_ip else request.getClientIP()
             now = int(time.time())
 
-            #Cleanup of the input as I have observed some dupe inputs creating overload on the db side
+            # Cleanup of the input as I have observed some dupe inputs creating overload on the db side
             hosts_uniq = sorted(set(hosts))
             nb_prune = len(hosts) - len(hosts_uniq)
             logging.info("[TrxId:{}] add_hosts({}) compacted by {} from {}".format(trxId, hosts_uniq, nb_prune, remote_ip))
+
             yield controllers.handle_report_from_client(remote_ip, now, hosts_uniq, trxId)
+
+            # Send update to peers - handle peering errors gracefully
             try:
                 yield peering.send_update(remote_ip, now, hosts_uniq)
-            except xmlrpc.Fault as e:
-                raise e
             except Exception as e:
-                logging.warning("[TrxId:{}] Error sending update to peers".format(trxId))
+                # Log peering errors but don't fail the main operation
+                logging.warning("[TrxId:{}] Error sending update to peers: {}".format(trxId, str(e)))
+                # Continue processing - peering failure shouldn't fail the client request
+
         except xmlrpc.Fault as e:
+            # Stop timer before re-raising xmlrpc.Fault
+            trx_timer.stop()
             raise e
         except Exception as e:
-            log.err(_why="[TrxId:{}] Exception in add_hosts".format(trxId))
-            raise xmlrpc.Fault(104, "[TrxId:{}] Error adding hosts: {}".format(trxId, e))
+            # Stop timer before raising new fault
+            trx_timer.stop()
+            log.err(e, f"[TrxId:{trxId}] Exception in add_hosts: {e}")
+            raise xmlrpc.Fault(104, "[TrxId:{}] Error adding hosts: {}".format(trxId, str(e)))
 
-        # Stop the Timer and log trx data
-        t.stop()
-        logging.info("[TrxId:{0}] add_hosts completed in {1:.3f} seconds".format(trxId, t.getElapsed_time()))
+        # Stop the Timer and log trx data (only reached on success)
+        trx_timer.stop()
+        elapsed_time = trx_timer.getElapsed_time()
+        logging.info("[TrxId:{0}] add_hosts completed in {1:.3f} seconds".format(trxId, elapsed_time))
         returnValue(0)
 
     @withRequest
@@ -202,12 +211,6 @@ class Server(xmlrpc.XMLRPC):
 
             # Return success (0) or any other appropriate response
             return 0
-
-        except Exception as e:
-            logging.error("[TrxId:{}] Error in version_report: {}".format(trxId, str(e)))
-            raise xmlrpc.Fault(106, "[TrxId:{}] Error processing version report: {}".format(trxId, str(e)))
-                
-
 
         except Exception as e:
             logging.error("[TrxId:{}] Error in version_report: {}".format(trxId, str(e)))
